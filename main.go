@@ -89,6 +89,22 @@ func startGBLoop(gameboy *Gameboy, monitor IOBinding) {
 	}
 }
 
+// IOBinding provides an interface for display and input bindings.
+type IOBinding interface {
+	// Init the IOBinding
+	Init(disableVsync bool)
+	// RenderScreen renders a frame of the game.
+	RenderScreen()
+	// Destroy the IOBinding instance.
+	Destroy()
+	// ProcessInput processes input.
+	ProcessInput()
+	// SetTitle sets the title of the window.
+	SetTitle(fps int)
+	// IsRunning returns if the monitor is still running.
+	IsRunning() bool
+}
+
 // Determine the ROM location. If the string in the flag value is empty then it
 // should prompt the user to select a rom file using the OS dialog.
 func getROM() string {
