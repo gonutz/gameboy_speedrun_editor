@@ -7,33 +7,17 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/faiface/mainthread"
-	"github.com/sqweek/dialog"
-
-	"fmt"
-
 	"github.com/Humpheh/goboy/pkg/gb"
 	"github.com/Humpheh/goboy/pkg/gbio"
 	"github.com/Humpheh/goboy/pkg/gbio/iopixel"
+	"github.com/faiface/mainthread"
 	"github.com/faiface/pixel/pixelgl"
+	"github.com/sqweek/dialog"
 )
 
-// The version of GoBoy
-var version = "develop"
-
-const logo = `
-    ______      ____
-   / ____/___  / __ )____  __  __
-  / / __/ __ \/ __  / __ \/ / / /
- / /_/ / /_/ / /_/ / /_/ / /_/ /
- \____/\____/_____/\____/\__, /
-%23s /____/
-`
-
 var (
-	mute    = flag.Bool("mute", false, "mute sound output")
-	dmgMode = flag.Bool("dmg", false, "set to force dmg mode")
-
+	mute        = flag.Bool("mute", false, "mute sound output")
+	dmgMode     = flag.Bool("dmg", false, "set to force dmg mode")
 	cpuprofile  = flag.String("cpuprofile", "", "write cpu profile to file (debugging)")
 	vsyncOff    = flag.Bool("disableVsync", false, "set to disable vsync (debugging)")
 	stepThrough = flag.Bool("stepthrough", false, "step through opcodes (debugging)")
@@ -57,10 +41,6 @@ func start() {
 		startCPUProfiling()
 		defer pprof.StopCPUProfile()
 	}
-
-	// Print the logo and the run settings to the console
-	fmt.Println(fmt.Sprintf(logo, version))
-	fmt.Printf("APU: %v\nCGB: %v\nROM: %v\n", !*mute, !*dmgMode, rom)
 
 	var opts []gb.GameboyOption
 	if !*dmgMode {
@@ -98,8 +78,9 @@ func startGBLoop(gameboy *gb.Gameboy, monitor gbio.IOBinding) {
 		}
 
 		frames++
+
 		monitor.ProcessInput()
-		_ = gameboy.Update()
+		gameboy.Update()
 		monitor.RenderScreen()
 
 		since := time.Since(start)
