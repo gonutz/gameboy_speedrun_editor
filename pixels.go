@@ -103,11 +103,9 @@ func (mon *PixelsIOBinding) Destroy() {
 // SetTitle sets the title of the game window.
 func (mon *PixelsIOBinding) SetTitle(fps int) {
 	title := "GoBoy"
-	if mon.Gameboy.IsGameLoaded() {
-		title += fmt.Sprintf(" - %s", mon.Gameboy.Memory.Cart.GetName())
-		if fps != 0 {
-			title += fmt.Sprintf(" (FPS: %2v)", fps)
-		}
+	title += fmt.Sprintf(" - %s", mon.Gameboy.Memory.Cart.GetName())
+	if fps != 0 {
+		title += fmt.Sprintf(" (FPS: %2v)", fps)
 	}
 	mon.Window.SetTitle(title)
 }
@@ -189,7 +187,7 @@ func (mon *PixelsIOBinding) toggleFullscreen() {
 
 // ProcessInput checks the input and process it.
 func (mon *PixelsIOBinding) ProcessInput() {
-	if mon.Gameboy.IsGameLoaded() && !mon.Gameboy.IsPaused() {
+	if !mon.Gameboy.IsPaused() {
 		mon.processGBInput()
 	}
 

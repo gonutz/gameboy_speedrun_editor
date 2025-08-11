@@ -47,19 +47,18 @@ func GetPaletteColour(index byte) (uint8, uint8, uint8) {
 }
 
 // NewPalette makes a new CGB colour palette.
-func NewPalette() *cgbPalette {
-	pal := make([]byte, 0x40)
-	for i := range pal {
-		pal[i] = 0xFF
+func NewPalette() cgbPalette {
+	p := cgbPalette{}
+	for i := range p.Palette {
+		p.Palette[i] = 0xFF
 	}
-
-	return &cgbPalette{Palette: pal}
+	return p
 }
 
 // Palette for cgb containing information tracking the palette colour info.
 type cgbPalette struct {
 	// Palette colour information.
-	Palette []byte
+	Palette [0x40]byte
 	// Current index the palette is referencing.
 	Index byte
 	// If to auto increment on write.

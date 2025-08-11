@@ -28,12 +28,14 @@ type APU struct {
 	lVol, rVol float64
 
 	// TODO: waveform RAM
-	waveformRam []byte
+	waveformRam [0x20]byte
 }
 
 // Init the sound emulation for a Gameboy.
 func (a *APU) Init(sound bool) {
-	a.waveformRam = make([]byte, 0x20)
+	for i := range a.waveformRam {
+		a.waveformRam[i] = 0
+	}
 
 	// Sets waveform ram to:
 	// 00 FF 00 FF  00 FF 00 FF  00 FF 00 FF  00 FF 00 FF
@@ -276,7 +278,7 @@ func (a *APU) start3() {
 	if selection == 1 {
 		duration = int((256-float64(length))*(1/256)) * sampleRate
 	}
-	a.chn3.generator = Waveform(a.waveformRam)
+	a.chn3.generator = Waveform(a.waveformRam[:])
 	a.chn3.Reset(duration)
 }
 

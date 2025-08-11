@@ -57,6 +57,11 @@ func runEditor() {
 
 	// frameInputs holds the state of all the Gameboy buttons for each frame.
 	var frameInputs [][buttonCount]bool
+	var gameboyStates []Gameboy
+	// emulateFromIndex is the first frame that needs to be emulated again
+	// because its state has changed. All frames after this (and including it)
+	// need to be emulated again.
+	emulateFromIndex := 0
 
 	for !win.Closed() {
 		if win.JustPressed(pixelgl.KeyEscape) {
@@ -66,8 +71,6 @@ func runEditor() {
 		lastLeftMostFrame := leftMostFrame
 
 		// Handle inputs.
-
-		needToUpdateFrames := false
 
 		if win.Pressed(pixelgl.KeyLeft) {
 			leftMostFrame = max(0, leftMostFrame-1)
@@ -91,6 +94,8 @@ func runEditor() {
 			leftMostFrame = 0
 		}
 
+		needToRender := leftMostFrame != lastLeftMostFrame
+
 		keyMap := map[pixelgl.Button]Button{
 			pixelgl.KeyL: ButtonLeft,
 			pixelgl.KeyU: ButtonUp,
@@ -104,11 +109,10 @@ func runEditor() {
 		for key, b := range keyMap {
 			if win.JustPressed(key) {
 				frameInputs[leftMostFrame][b] = !frameInputs[leftMostFrame][b]
-				needToUpdateFrames = true
+				emulateFromIndex = leftMostFrame
+				needToRender = true
 			}
 		}
-
-		needToUpdateFrames = needToUpdateFrames || lastLeftMostFrame != leftMostFrame
 
 		// Render the state.
 
@@ -121,15 +125,11 @@ func runEditor() {
 
 		if needToRecreatePixels {
 			pixels = make([]uint8, canvasWidth*canvasHeight*4)
-			needToUpdateFrames = true
+			needToRender = true
 		}
 
-		simulateFrame := func(gameboy *Gameboy, i int) {
-			for i >= len(frameInputs) {
-				frameInputs = append(frameInputs, [buttonCount]bool{})
-			}
-
-			inputs := frameInputs[i]
+		updateGameboy := func(gameboy *Gameboy, frameIndex int) {
+			inputs := frameInputs[frameIndex]
 			for b := range buttonCount {
 				if inputs[b] {
 					gameboy.PressButton(b)
@@ -141,8 +141,41 @@ func runEditor() {
 			gameboy.Update()
 		}
 
-		if needToUpdateFrames {
-			// TODO Remove this when we do not need it for debugging anymore.
+		simulateFrame := func(frameIndex int) {
+			for frameIndex >= len(frameInputs) {
+				frameInputs = append(frameInputs, [buttonCount]bool{})
+			}
+
+			for frameIndex >= len(gameboyStates) {
+				if frameIndex == 0 {
+					gb, _ := NewGameboy(rom)
+					updateGameboy(&gb, 0)
+					gameboyStates = append(gameboyStates, gb)
+				} else {
+					n := len(gameboyStates) - 1
+					gb := gameboyStates[n]
+					updateGameboy(&gb, n+1)
+					gameboyStates = append(gameboyStates, gb)
+				}
+			}
+
+			if frameIndex >= emulateFromIndex {
+				// Emulate all the obsolete states.
+				for i := emulateFromIndex; i <= frameIndex; i++ {
+					if i == 0 {
+						gameboyStates[0], _ = NewGameboy(rom)
+						updateGameboy(&gameboyStates[0], 0)
+					} else {
+						gameboyStates[i] = gameboyStates[i-1]
+						updateGameboy(&gameboyStates[i], i)
+					}
+				}
+
+				emulateFromIndex = frameIndex + 1
+			}
+		}
+
+		if needToRender {
 			for i := range pixels {
 				pixels[i] = 0
 			}
@@ -152,13 +185,6 @@ func runEditor() {
 
 			frameCountX := canvasWidth / frameWidth
 			frameCountY := canvasHeight / frameHeight
-
-			gameboy, err := NewGameboy(rom)
-			check(err)
-
-			for i := range leftMostFrame {
-				simulateFrame(gameboy, i)
-			}
 
 			img := &image.RGBA{
 				Pix:    pixels,
@@ -179,14 +205,14 @@ func runEditor() {
 					offsetX := frameX*frameWidth + 1
 					offsetY := frameY*frameHeight + 13
 
-					simulateFrame(gameboy, frameIndex)
+					simulateFrame(frameIndex)
 
 					for y := range ScreenHeight {
 						for x := range ScreenWidth {
 							// TODO Possible optimization, index
 							// gameboy.PreparedData[y][x] and copy by scanline
 							// instead of by pixels.
-							c := gameboy.PreparedData[x][y]
+							c := gameboyStates[frameIndex].PreparedData[x][y]
 							destX := offsetX + x
 							destY := offsetY + y
 							dest := destX*4 + destY*canvasWidth*4
@@ -304,8 +330,8 @@ func start() {
 		gameboy.Debug.OutputOpcodes = true
 	}
 
-	monitor.Gameboy = gameboy
-	startGBLoop(gameboy, monitor)
+	monitor.Gameboy = &gameboy
+	startGBLoop(&gameboy, monitor)
 }
 
 func startGBLoop(gameboy *Gameboy, monitor IOBinding) {

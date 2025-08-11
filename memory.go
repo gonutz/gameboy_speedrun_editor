@@ -1,7 +1,5 @@
 package main
 
-import "log"
-
 const (
 	// DIV is the divider register which is incremented periodically by
 	// the Gameboy.
@@ -22,8 +20,7 @@ const (
 // Memory stores gameboy ROM, RAM and cartridge data. It manages the
 // banking of these data banks.
 type Memory struct {
-	gb      *Gameboy
-	Cart    *Cart
+	Cart    Cart
 	HighRAM [0x100]byte
 	// VRAM bank 1-2 data
 	VRAM [0x4000]byte
@@ -44,8 +41,6 @@ type Memory struct {
 
 // Init the gb memory to the post-boot values.
 func (mem *Memory) Init(gameboy *Gameboy) {
-	mem.gb = gameboy
-
 	// Set the default values
 	mem.HighRAM[0x04] = 0x1E
 	mem.HighRAM[0x05] = 0x00
@@ -97,25 +92,25 @@ func (mem *Memory) LoadCart(loc string) (bool, error) {
 
 // WriteHighRam writes to the range 0xFF00-0xFFFF in the memory address
 // space. The range includes both HRAM and the hardware registers.
-func (mem *Memory) WriteHighRam(address uint16, value byte) {
+func (mem *Memory) WriteHighRam(gb *Gameboy, address uint16, value byte) {
 	switch {
 	case address >= 0xFEA0 && address < 0xFEFF:
 		// Restricted RAM
 		return
 
 	case address >= 0xFF10 && address <= 0xFF26:
-		mem.gb.Sound.Write(address, value)
+		gb.Sound.Write(address, value)
 
 	case address >= 0xFF30 && address <= 0xFF3F:
 		// Writing to channel 3 waveform RAM.
-		mem.gb.Sound.WriteWaveform(address, value)
+		gb.Sound.WriteWaveform(address, value)
 
 	case address == 0xFF02:
 
 	case address == DIV:
 		// Trap divider register
-		mem.gb.setClockFreq()
-		mem.gb.CPU.Divider = 0
+		gb.setClockFreq()
+		gb.CPU.Divider = 0
 		mem.HighRAM[DIV-0xFF00] = 0
 
 	case address == TIMA:
@@ -126,12 +121,12 @@ func (mem *Memory) WriteHighRam(address uint16, value byte) {
 
 	case address == TAC:
 		// Timer control
-		currentFreq := mem.gb.getClockFreq()
+		currentFreq := gb.getClockFreq()
 		mem.HighRAM[TAC-0xFF00] = value | 0xF8
-		newFreq := mem.gb.getClockFreq()
+		newFreq := gb.getClockFreq()
 
 		if currentFreq != newFreq {
-			mem.gb.setClockFreq()
+			gb.setClockFreq()
 		}
 
 	case address == 0xFF41:
@@ -143,53 +138,53 @@ func (mem *Memory) WriteHighRam(address uint16, value byte) {
 
 	case address == 0xFF46:
 		// DMA transfer
-		mem.doDMATransfer(value)
+		mem.doDMATransfer(gb, value)
 
 	case address == 0xFF4D:
 		// CGB speed change
-		if mem.gb.IsCGB() {
-			mem.gb.prepareSpeed = Test(value, 0)
+		if gb.IsCGB() {
+			gb.prepareSpeed = Test(value, 0)
 		}
 
 	case address == 0xFF4F:
 		// VRAM bank (CGB only), blocked when HDMA is active
-		if mem.gb.IsCGB() && !mem.hdmaActive {
+		if gb.IsCGB() && !mem.hdmaActive {
 			mem.VRAMBank = value & 0x1
 		}
 
 	case address == 0xFF55:
 		// CGB DMA transfer
-		if mem.gb.IsCGB() {
-			mem.doNewDMATransfer(value)
+		if gb.IsCGB() {
+			mem.doNewDMATransfer(gb, value)
 		}
 
 	case address == 0xFF68:
 		// BG palette index
-		if mem.gb.IsCGB() {
-			mem.gb.BGPalette.updateIndex(value)
+		if gb.IsCGB() {
+			gb.BGPalette.updateIndex(value)
 		}
 
 	case address == 0xFF69:
 		// BG Palette data
-		if mem.gb.IsCGB() {
-			mem.gb.BGPalette.write(value)
+		if gb.IsCGB() {
+			gb.BGPalette.write(value)
 		}
 
 	case address == 0xFF6A:
 		// Sprite palette index
-		if mem.gb.IsCGB() {
-			mem.gb.SpritePalette.updateIndex(value)
+		if gb.IsCGB() {
+			gb.SpritePalette.updateIndex(value)
 		}
 
 	case address == 0xFF6B:
 		// Sprite Palette data
-		if mem.gb.IsCGB() {
-			mem.gb.SpritePalette.write(value)
+		if gb.IsCGB() {
+			gb.SpritePalette.write(value)
 		}
 
 	case address == 0xFF70:
 		// WRAM1 bank (CGB mode)
-		if mem.gb.IsCGB() {
+		if gb.IsCGB() {
 			mem.WRAMBank = value & 0x7
 			if mem.WRAMBank == 0 {
 				mem.WRAMBank = 1
@@ -197,7 +192,6 @@ func (mem *Memory) WriteHighRam(address uint16, value byte) {
 		}
 
 	case address >= 0xFF72 && address <= 0xFF77:
-		log.Print("write to ", address)
 
 	default:
 		mem.HighRAM[address-0xFF00] = value
@@ -207,7 +201,7 @@ func (mem *Memory) WriteHighRam(address uint16, value byte) {
 // Write a value at an address to the relevant location based on the
 // current state of the gameboy. This handles banking and side effects
 // of writing to certain addresses.
-func (mem *Memory) Write(address uint16, value byte) {
+func (mem *Memory) Write(gb *Gameboy, address uint16, value byte) {
 	switch {
 	case address < 0x8000:
 		// Write to the cartridge ROM (banking)
@@ -246,13 +240,13 @@ func (mem *Memory) Write(address uint16, value byte) {
 
 	default:
 		// High RAM
-		mem.WriteHighRam(address, value)
+		mem.WriteHighRam(gb, address, value)
 	}
 }
 
 // Read from memory. Will go and read from cartridge memory if the
 // requested address is mapped to that space.
-func (mem *Memory) Read(address uint16) byte {
+func (mem *Memory) Read(gb *Gameboy, address uint16) byte {
 	switch {
 	case address < 0x8000:
 		// Cartridge ROM
@@ -292,24 +286,24 @@ func (mem *Memory) Read(address uint16) byte {
 		return 0xFF
 
 	default:
-		return mem.ReadHighRam(address)
+		return mem.ReadHighRam(gb, address)
 	}
 }
 
 // ReadHighRam reads from 0xFF00-0xFFFF in the memory address space. The range
 // includes both HRAM and the hardware registers.
-func (mem *Memory) ReadHighRam(address uint16) byte {
+func (mem *Memory) ReadHighRam(gb *Gameboy, address uint16) byte {
 	switch {
 	// Joypad address
 	case address == 0xFF00:
-		return mem.gb.joypadValue(mem.HighRAM[0x00])
+		return gb.joypadValue(mem.HighRAM[0x00])
 
 	case address >= 0xFF10 && address <= 0xFF26:
-		return mem.gb.Sound.Read(address)
+		return gb.Sound.Read(address)
 
 	case address >= 0xFF30 && address <= 0xFF3F:
 		// Writing to channel 3 waveform RAM.
-		return mem.gb.Sound.Read(address)
+		return gb.Sound.Read(address)
 
 	case address == 0xFF0F:
 		return mem.HighRAM[0x0F] | 0xE0
@@ -320,35 +314,35 @@ func (mem *Memory) ReadHighRam(address uint16) byte {
 
 	case address == 0xFF68:
 		// BG palette index
-		if mem.gb.IsCGB() {
-			return mem.gb.BGPalette.readIndex()
+		if gb.IsCGB() {
+			return gb.BGPalette.readIndex()
 		}
 		return 0
 
 	case address == 0xFF69:
 		// BG Palette data
-		if mem.gb.IsCGB() {
-			return mem.gb.BGPalette.read()
+		if gb.IsCGB() {
+			return gb.BGPalette.read()
 		}
 		return 0
 
 	case address == 0xFF6A:
 		// Sprite palette index
-		if mem.gb.IsCGB() {
-			return mem.gb.SpritePalette.readIndex()
+		if gb.IsCGB() {
+			return gb.SpritePalette.readIndex()
 		}
 		return 0
 
 	case address == 0xFF6B:
 		// Sprite Palette data
-		if mem.gb.IsCGB() {
-			return mem.gb.SpritePalette.read()
+		if gb.IsCGB() {
+			return gb.SpritePalette.read()
 		}
 		return 0
 
 	case address == 0xFF4D:
 		// Speed switch data
-		return mem.gb.currentSpeed<<7 | B(mem.gb.prepareSpeed)
+		return gb.currentSpeed<<7 | B(gb.prepareSpeed)
 
 	case address == 0xFF4F:
 		return mem.VRAMBank
@@ -362,19 +356,19 @@ func (mem *Memory) ReadHighRam(address uint16) byte {
 }
 
 // Perform a DMA transfer.
-func (mem *Memory) doDMATransfer(value byte) {
+func (mem *Memory) doDMATransfer(gb *Gameboy, value byte) {
 	// TODO: This may need to be done instead of CPU ticks
 	address := uint16(value) << 8 // (data * 100)
 
 	var i uint16
 	for i = 0; i < 0xA0; i++ {
 		// TODO: Check this doesn't prevent
-		mem.Write(0xFE00+i, mem.Read(address+i))
+		mem.Write(gb, 0xFE00+i, mem.Read(gb, address+i))
 	}
 }
 
 // Start a CGB DMA transfer.
-func (mem *Memory) doNewDMATransfer(value byte) {
+func (mem *Memory) doNewDMATransfer(gb *Gameboy, value byte) {
 	if mem.hdmaActive && Val(value, 7) == 0 {
 		// Abort a HDMA transfer
 		mem.hdmaActive = false
@@ -387,7 +381,7 @@ func (mem *Memory) doNewDMATransfer(value byte) {
 	// The 7th bit is DMA mode
 	if value>>7 == 0 {
 		// Mode 0, general purpose DMA
-		mem.performNewDMATransfer(length)
+		mem.performNewDMATransfer(gb, length)
 		mem.HighRAM[0x55] = 0xFF
 	} else {
 		// Mode 1, H-Blank DMA
@@ -397,12 +391,12 @@ func (mem *Memory) doNewDMATransfer(value byte) {
 }
 
 // Perform a HDMA transfer during a HBlank period.
-func (mem *Memory) doHDMATransfer() {
+func (mem *Memory) doHDMATransfer(gb *Gameboy) {
 	if !mem.hdmaActive {
 		return
 	}
 
-	mem.performNewDMATransfer(0x10)
+	mem.performNewDMATransfer(gb, 0x10)
 	if mem.hdmaLength > 0 {
 		mem.hdmaLength--
 		mem.HighRAM[0x55] = mem.hdmaLength
@@ -414,7 +408,7 @@ func (mem *Memory) doHDMATransfer() {
 }
 
 // Transfer a set amount of DMA data based on the current register values.
-func (mem *Memory) performNewDMATransfer(length uint16) {
+func (mem *Memory) performNewDMATransfer(gb *Gameboy, length uint16) {
 	// Load the source and destination from RAM
 	source := (uint16(mem.HighRAM[0x51])<<8 | uint16(mem.HighRAM[0x52])) & 0xFFF0
 	destination := (uint16(mem.HighRAM[0x53])<<8 | uint16(mem.HighRAM[0x54])) & 0x1FF0
@@ -422,7 +416,7 @@ func (mem *Memory) performNewDMATransfer(length uint16) {
 
 	// Transfer the data from the source to the destination
 	for i := uint16(0); i < length; i++ {
-		mem.Write(destination, mem.Read(source))
+		mem.Write(gb, destination, mem.Read(gb, source))
 		destination++
 		source++
 	}

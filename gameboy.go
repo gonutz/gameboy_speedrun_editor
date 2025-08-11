@@ -16,9 +16,9 @@ const (
 type Gameboy struct {
 	options gameboyOptions
 
-	Memory *Memory
-	CPU    *CPU
-	Sound  *APU
+	Memory Memory
+	CPU    CPU
+	Sound  APU
 
 	Debug  DebugFlags
 	paused bool
@@ -43,17 +43,14 @@ type Gameboy struct {
 	interruptsOn       bool
 	halted             bool
 
-	mainInst [0x100]func()
-	cbInst   [0x100]func()
-
 	// Mask of the currenly pressed buttons.
 	inputMask byte
 
 	// Flag if the game is running in cgb mode. For this to be true the game
 	// rom must support cgb mode and the option be true.
 	cgbMode       bool
-	BGPalette     *cgbPalette
-	SpritePalette *cgbPalette
+	BGPalette     cgbPalette
+	SpritePalette cgbPalette
 
 	currentSpeed byte
 	prepareSpeed bool
@@ -107,7 +104,7 @@ func (gb *Gameboy) BGMapString() string {
 	for y := uint16(0); y < 0x20; y++ {
 		out += fmt.Sprintf("%2x: ", y)
 		for x := uint16(0); x < 0x20; x++ {
-			out += fmt.Sprintf("%2x ", gb.Memory.Read(0x9800+(y*0x20)+x))
+			out += fmt.Sprintf("%2x ", gb.Memory.Read(gb, 0x9800+(y*0x20)+x))
 		}
 		out += "\n"
 	}
@@ -141,9 +138,9 @@ func (gb *Gameboy) updateTimers(cycles int) {
 		freq := gb.getClockFreqCount()
 		for gb.timerCounter >= freq {
 			gb.timerCounter -= freq
-			tima := gb.Memory.Read(TIMA)
+			tima := gb.Memory.Read(gb, TIMA)
 			if tima == 0xFF {
-				gb.Memory.HighRAM[TIMA-0xFF00] = gb.Memory.Read(TMA)
+				gb.Memory.HighRAM[TIMA-0xFF00] = gb.Memory.Read(gb, TMA)
 				gb.requestInterrupt(2)
 			} else {
 				gb.Memory.HighRAM[TIMA-0xFF00] = tima + 1
@@ -153,11 +150,11 @@ func (gb *Gameboy) updateTimers(cycles int) {
 }
 
 func (gb *Gameboy) isClockEnabled() bool {
-	return Test(gb.Memory.Read(TAC), 2)
+	return Test(gb.Memory.Read(gb, TAC), 2)
 }
 
 func (gb *Gameboy) getClockFreq() byte {
-	return gb.Memory.Read(TAC) & 0x3
+	return gb.Memory.Read(gb, TAC) & 0x3
 }
 
 func (gb *Gameboy) getClockFreqCount() int {
@@ -187,9 +184,9 @@ func (gb *Gameboy) dividerRegister(cycles int) {
 
 // Request the Gameboy to perform an interrupt.
 func (gb *Gameboy) requestInterrupt(interrupt byte) {
-	req := gb.Memory.ReadHighRam(0xFF0F)
+	req := gb.Memory.ReadHighRam(gb, 0xFF0F)
 	req = Set(req, interrupt)
-	gb.Memory.Write(0xFF0F, req)
+	gb.Memory.Write(gb, 0xFF0F, req)
 }
 
 func (gb *Gameboy) doInterrupts() (cycles int) {
@@ -202,8 +199,8 @@ func (gb *Gameboy) doInterrupts() (cycles int) {
 		return 0
 	}
 
-	req := gb.Memory.ReadHighRam(0xFF0F)
-	enabled := gb.Memory.ReadHighRam(0xFFFF)
+	req := gb.Memory.ReadHighRam(gb, 0xFF0F)
+	enabled := gb.Memory.ReadHighRam(gb, 0xFFFF)
 
 	if req > 0 {
 		var i byte
@@ -237,9 +234,9 @@ func (gb *Gameboy) serviceInterrupt(interrupt byte) {
 	gb.interruptsOn = false
 	gb.halted = false
 
-	req := gb.Memory.ReadHighRam(0xFF0F)
+	req := gb.Memory.ReadHighRam(gb, 0xFF0F)
 	req = Reset(req, interrupt)
-	gb.Memory.Write(0xFF0F, req)
+	gb.Memory.Write(gb, 0xFF0F, req)
 
 	gb.pushStack(gb.CPU.PC)
 	gb.CPU.PC = interruptAddresses[interrupt]
@@ -248,16 +245,16 @@ func (gb *Gameboy) serviceInterrupt(interrupt byte) {
 // Push a 16 bit value onto the stack and decrement SP.
 func (gb *Gameboy) pushStack(address uint16) {
 	sp := gb.CPU.SP.HiLo()
-	gb.Memory.Write(sp-1, byte(uint16(address&0xFF00)>>8))
-	gb.Memory.Write(sp-2, byte(address&0xFF))
+	gb.Memory.Write(gb, sp-1, byte(uint16(address&0xFF00)>>8))
+	gb.Memory.Write(gb, sp-2, byte(address&0xFF))
 	gb.CPU.SP.Set(gb.CPU.SP.HiLo() - 2)
 }
 
 // Pop the next 16 bit value off the stack and increment SP.
 func (gb *Gameboy) popStack() uint16 {
 	sp := gb.CPU.SP.HiLo()
-	byte1 := uint16(gb.Memory.Read(sp))
-	byte2 := uint16(gb.Memory.Read(sp+1)) << 8
+	byte1 := uint16(gb.Memory.Read(gb, sp))
+	byte2 := uint16(gb.Memory.Read(gb, sp+1)) << 8
 	gb.CPU.SP.Set(gb.CPU.SP.HiLo() + 2)
 	return byte1 | byte2
 }
@@ -270,11 +267,6 @@ func (gb *Gameboy) joypadValue(current byte) byte {
 		in = (gb.inputMask >> 4) & 0xF
 	}
 	return current | 0xc0 | in
-}
-
-// IsGameLoaded returns if there is a game loaded in the gameboy or not.
-func (gb *Gameboy) IsGameLoaded() bool {
-	return gb.Memory != nil && gb.Memory.Cart != nil
 }
 
 // IsCGB returns if we are using CGB features.
@@ -298,29 +290,26 @@ func (gb *Gameboy) init(romFile string) error {
 // Setup and instantitate the gameboys components.
 func (gb *Gameboy) setup() {
 	// Initialise the CPU
-	gb.CPU = &CPU{}
+	gb.CPU = CPU{}
 	gb.CPU.Init(gb.options.cgbMode)
 
 	// Initialise the memory
-	gb.Memory = &Memory{}
+	gb.Memory = Memory{}
 	gb.Memory.Init(gb)
 
-	gb.Sound = &APU{}
+	gb.Sound = APU{}
 	gb.Sound.Init(gb.options.sound)
 
 	gb.Debug = DebugFlags{}
 	gb.scanlineCounter = 456
 	gb.inputMask = 0xFF
 
-	gb.mainInst = gb.mainInstructions()
-	gb.cbInst = gb.cbInstructions()
-
 	gb.SpritePalette = NewPalette()
 	gb.BGPalette = NewPalette()
 }
 
 // NewGameboy returns a new Gameboy instance.
-func NewGameboy(romFile string, opts ...GameboyOption) (*Gameboy, error) {
+func NewGameboy(romFile string, opts ...GameboyOption) (Gameboy, error) {
 	// Build the gameboy
 	gameboy := Gameboy{}
 	for _, opt := range opts {
@@ -328,7 +317,7 @@ func NewGameboy(romFile string, opts ...GameboyOption) (*Gameboy, error) {
 	}
 	err := gameboy.init(romFile)
 	if err != nil {
-		return nil, err
+		return Gameboy{}, err
 	}
-	return &gameboy, nil
+	return gameboy, nil
 }
