@@ -76,16 +76,16 @@ func (mon *PixelsIOBinding) IsRunning() bool {
 
 // RenderScreen renders the pixels on the screen.
 func (mon *PixelsIOBinding) RenderScreen() {
-	for y := 0; y < ScreenHeight; y++ {
-		for x := 0; x < ScreenWidth; x++ {
+	for y := range ScreenHeight {
+		for x := range ScreenWidth {
 			col := mon.Gameboy.PreparedData[x][y]
 			rgb := color.RGBA{R: col[0], G: col[1], B: col[2], A: 0xFF}
 			mon.picture.Pix[(ScreenHeight-1-y)*ScreenWidth+x] = rgb
 		}
 	}
 
-	r, g, b := GetPaletteColour(3)
-	bg := color.RGBA{R: r, G: g, B: b, A: 0xFF}
+	col := ColorPalette[3]
+	bg := color.RGBA{R: col[0], G: col[1], B: col[2], A: 0xFF}
 	mon.Window.Clear(bg)
 
 	spr := pixel.NewSprite(pixel.Picture(mon.picture), pixel.R(0, 0, ScreenWidth, ScreenHeight))
@@ -124,32 +124,10 @@ var keyMap = map[pixelgl.Button]Button{
 
 // Extra key bindings to functions.
 var extraKeyMap = map[pixelgl.Button]func(*PixelsIOBinding){
-	// Pause execution
-	pixelgl.KeyEscape: func(mon *PixelsIOBinding) {
-		// Toggle the paused state
-		mon.Gameboy.SetPaused(!mon.Gameboy.IsPaused())
-	},
-
-	// Change GB colour palette
-	pixelgl.KeyEqual: func(mon *PixelsIOBinding) {
-		CurrentPalette = (CurrentPalette + 1) % byte(len(Palettes))
-	},
-
 	// GPU debugging
-	pixelgl.KeyQ: func(mon *PixelsIOBinding) {
-		mon.Gameboy.Debug.HideBackground = !mon.Gameboy.Debug.HideBackground
-	},
-	pixelgl.KeyW: func(mon *PixelsIOBinding) {
-		mon.Gameboy.Debug.HideSprites = !mon.Gameboy.Debug.HideSprites
-	},
 	pixelgl.KeyD: func(mon *PixelsIOBinding) {
 		fmt.Println("BG Map:")
 		fmt.Println(mon.Gameboy.BGMapString())
-	},
-
-	// CPU debugging
-	pixelgl.KeyE: func(mon *PixelsIOBinding) {
-		mon.Gameboy.Debug.OutputOpcodes = !mon.Gameboy.Debug.OutputOpcodes
 	},
 
 	// Audio channel debugging
@@ -187,9 +165,7 @@ func (mon *PixelsIOBinding) toggleFullscreen() {
 
 // ProcessInput checks the input and process it.
 func (mon *PixelsIOBinding) ProcessInput() {
-	if !mon.Gameboy.IsPaused() {
-		mon.processGBInput()
-	}
+	mon.processGBInput()
 
 	// Extra keys not related to emulation
 	for key, f := range extraKeyMap {

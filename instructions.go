@@ -1254,7 +1254,6 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			opcode := k
 			ret[k] = func(*Gameboy) {
 				log.Printf("Unimplemented opcode: %#2x", opcode)
-				WaitForInput()
 			}
 		}
 	}

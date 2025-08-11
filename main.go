@@ -27,12 +27,11 @@ import (
 )
 
 var (
-	mute        = flag.Bool("mute", false, "mute sound output")
-	dmgMode     = flag.Bool("dmg", false, "set to force dmg mode")
-	cpuprofile  = flag.String("cpuprofile", "", "write cpu profile to file (debugging)")
-	vsyncOff    = flag.Bool("disableVsync", false, "set to disable vsync (debugging)")
-	stepThrough = flag.Bool("stepthrough", false, "step through opcodes (debugging)")
-	unlocked    = flag.Bool("unlocked", false, "if to unlock the cpu speed (debugging)")
+	mute       = flag.Bool("mute", false, "mute sound output")
+	dmgMode    = flag.Bool("dmg", false, "set to force dmg mode")
+	cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file (debugging)")
+	vsyncOff   = flag.Bool("disableVsync", false, "set to disable vsync (debugging)")
+	unlocked   = flag.Bool("unlocked", false, "if to unlock the cpu speed (debugging)")
 )
 
 func main() {
@@ -228,7 +227,7 @@ func runEditor() {
 			for frameIndex >= len(gameboyStates) {
 				nextFrame := len(gameboyStates)
 				if nextFrame == 0 {
-					gb, _ := NewGameboy(rom)
+					gb, _ := NewGameboy(rom, gameboyOptions{})
 					updateGameboy(&gb, 0)
 					gameboyStates = append(gameboyStates, gb)
 				} else {
@@ -242,7 +241,7 @@ func runEditor() {
 				// Emulate all the obsolete states.
 				for i := emulateFromIndex; i <= frameIndex; i++ {
 					if i == 0 {
-						gameboyStates[0], _ = NewGameboy(rom)
+						gameboyStates[0], _ = NewGameboy(rom, gameboyOptions{})
 						updateGameboy(&gameboyStates[0], 0)
 					} else {
 						gameboyStates[i] = gameboyStates[i-1]
@@ -392,21 +391,15 @@ func start() {
 		defer pprof.StopCPUProfile()
 	}
 
-	var opts []GameboyOption
-	if !*dmgMode {
-		opts = append(opts, WithCGBEnabled())
-	}
-	if !*mute {
-		opts = append(opts, WithSound())
+	opts := gameboyOptions{
+		cgbMode: !*dmgMode,
+		sound:   !*mute,
 	}
 
 	// Initialise the GameBoy with the flag options
-	gameboy, err := NewGameboy(rom, opts...)
+	gameboy, err := NewGameboy(rom, opts)
 	if err != nil {
 		log.Fatal(err)
-	}
-	if *stepThrough {
-		gameboy.Debug.OutputOpcodes = true
 	}
 
 	monitor.Gameboy = &gameboy

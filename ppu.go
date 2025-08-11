@@ -128,11 +128,11 @@ func (gb *Gameboy) drawScanline(scanline byte) {
 	control := gb.Memory.ReadHighRam(gb, LCDC)
 
 	// LCDC bit 0 clears tiles on DMG but controls priority on CGB.
-	if (gb.IsCGB() || Test(control, 0)) && !gb.Debug.HideBackground {
+	if gb.IsCGB() || Test(control, 0) {
 		gb.renderTiles(control, scanline)
 	}
 
-	if Test(control, 1) && !gb.Debug.HideSprites {
+	if Test(control, 1) {
 		gb.renderSprites(control, int32(scanline))
 	}
 }
@@ -279,7 +279,8 @@ func (gb *Gameboy) getColour(colourNum byte, palette byte) (uint8, uint8, uint8)
 	hi := colourNum<<1 | 1
 	lo := colourNum << 1
 	col := (Val(palette, hi) << 1) | Val(palette, lo)
-	return GetPaletteColour(col)
+	c := ColorPalette[col]
+	return c[0], c[1], c[2]
 }
 
 const spritePriorityOffset = 100

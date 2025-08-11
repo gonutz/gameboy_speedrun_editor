@@ -20,9 +20,6 @@ type Gameboy struct {
 	CPU    CPU
 	Sound  APU
 
-	Debug  DebugFlags
-	paused bool
-
 	timerCounter int
 
 	// Matrix of pixel data which is used while the screen is rendering. When a
@@ -60,17 +57,10 @@ type Gameboy struct {
 
 // Update update the state of the gameboy by a single frame.
 func (gb *Gameboy) Update() int {
-	if gb.paused {
-		return 0
-	}
-
 	cycles := 0
 	for cycles < CyclesPerFrame*gb.getSpeed() {
 		cyclesOp := 4
 		if !gb.halted {
-			if gb.Debug.OutputOpcodes {
-				LogOpcode(gb, false)
-			}
 			cyclesOp = gb.ExecuteNextOpcode()
 		} else {
 			// TODO: This is incorrect
@@ -81,16 +71,6 @@ func (gb *Gameboy) Update() int {
 		cycles += gb.doInterrupts()
 	}
 	return cycles
-}
-
-// SetPaused sets the paused state of the execution.
-func (gb *Gameboy) SetPaused(paused bool) {
-	gb.paused = paused
-}
-
-// IsPaused returns if the GameBoy is paused or not.
-func (gb *Gameboy) IsPaused() bool {
-	return gb.paused
 }
 
 // ToggleSoundChannel toggles a sound channel for debugging.
@@ -300,7 +280,6 @@ func (gb *Gameboy) setup() {
 	gb.Sound = APU{}
 	gb.Sound.Init(gb.options.sound)
 
-	gb.Debug = DebugFlags{}
 	gb.scanlineCounter = 456
 	gb.inputMask = 0xFF
 
@@ -308,13 +287,14 @@ func (gb *Gameboy) setup() {
 	gb.BGPalette = NewPalette()
 }
 
+type gameboyOptions struct {
+	sound   bool
+	cgbMode bool
+}
+
 // NewGameboy returns a new Gameboy instance.
-func NewGameboy(romFile string, opts ...GameboyOption) (Gameboy, error) {
-	// Build the gameboy
-	gameboy := Gameboy{}
-	for _, opt := range opts {
-		opt(&gameboy.options)
-	}
+func NewGameboy(romFile string, opts gameboyOptions) (Gameboy, error) {
+	gameboy := Gameboy{options: opts}
 	err := gameboy.init(romFile)
 	if err != nil {
 		return Gameboy{}, err
