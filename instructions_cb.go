@@ -13,7 +13,7 @@ func instRlc(gb *Gameboy, setter func(gb *Gameboy, value byte), val byte) {
 
 func instRl(gb *Gameboy, setter func(gb *Gameboy, value byte), val byte) {
 	newCarry := val >> 7
-	oldCarry := B(gb.CPU.C())
+	oldCarry := BoolToBit(gb.CPU.C())
 	rot := (val<<1)&0xFF | oldCarry
 	setter(gb, rot)
 
@@ -36,7 +36,7 @@ func instRrc(gb *Gameboy, setter func(gb *Gameboy, value byte), val byte) {
 
 func instRr(gb *Gameboy, setter func(gb *Gameboy, value byte), val byte) {
 	newCarry := val & 1
-	oldCarry := B(gb.CPU.C())
+	oldCarry := BoolToBit(gb.CPU.C())
 	rot := (val >> 1) | (oldCarry << 7)
 	setter(gb, rot)
 
@@ -142,24 +142,24 @@ func cbInstructions() [0x100]func(gb *Gameboy) {
 		instructions[0x78+i] = func(gb *Gameboy) { gb.instBit(7, getMap[i](gb)) }
 
 		// RES instructions
-		instructions[0x80+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 0)) }
-		instructions[0x88+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 1)) }
-		instructions[0x90+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 2)) }
-		instructions[0x98+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 3)) }
-		instructions[0xA0+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 4)) }
-		instructions[0xA8+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 5)) }
-		instructions[0xB0+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 6)) }
-		instructions[0xB8+i] = func(gb *Gameboy) { setMap[i](gb, Reset(getMap[i](gb), 7)) }
+		instructions[0x80+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 0)) }
+		instructions[0x88+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 1)) }
+		instructions[0x90+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 2)) }
+		instructions[0x98+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 3)) }
+		instructions[0xA0+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 4)) }
+		instructions[0xA8+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 5)) }
+		instructions[0xB0+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 6)) }
+		instructions[0xB8+i] = func(gb *Gameboy) { setMap[i](gb, ResetBit(getMap[i](gb), 7)) }
 
 		// SET instructions
-		instructions[0xC0+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 0)) }
-		instructions[0xC8+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 1)) }
-		instructions[0xD0+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 2)) }
-		instructions[0xD8+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 3)) }
-		instructions[0xE0+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 4)) }
-		instructions[0xE8+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 5)) }
-		instructions[0xF0+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 6)) }
-		instructions[0xF8+i] = func(gb *Gameboy) { setMap[i](gb, Set(getMap[i](gb), 7)) }
+		instructions[0xC0+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 0)) }
+		instructions[0xC8+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 1)) }
+		instructions[0xD0+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 2)) }
+		instructions[0xD8+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 3)) }
+		instructions[0xE0+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 4)) }
+		instructions[0xE8+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 5)) }
+		instructions[0xF0+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 6)) }
+		instructions[0xF8+i] = func(gb *Gameboy) { setMap[i](gb, SetBit(getMap[i](gb), 7)) }
 	}
 
 	return instructions

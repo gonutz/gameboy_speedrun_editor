@@ -1,22 +1,22 @@
 package main
 
-// Test if a bit is set.
-func Test(value byte, bit byte) bool {
+// BitIsSet if a bit is set.
+func BitIsSet(value byte, bit byte) bool {
 	return (value>>bit)&1 == 1
 }
 
-// Val returns the value of a bit bit.
-func Val(value byte, bit byte) byte {
+// BitValue returns the value of a bit bit.
+func BitValue(value byte, bit byte) byte {
 	return (value >> bit) & 1
 }
 
-// Set a bit and return the new value.
-func Set(value byte, bit byte) byte {
+// SetBit a bit and return the new value.
+func SetBit(value byte, bit byte) byte {
 	return value | (1 << bit)
 }
 
-// Reset a bit and return the new value.
-func Reset(value byte, bit byte) byte {
+// ResetBit a bit and return the new value.
+func ResetBit(value byte, bit byte) byte {
 	return value & ^(1 << bit)
 }
 
@@ -25,8 +25,8 @@ func HalfCarryAdd(val1 byte, val2 byte) bool {
 	return (val1&0xF)+(val2&0xF) > 0xF
 }
 
-// B transforms a bool into a 1/0 byte.
-func B(val bool) byte {
+// BoolToBit transforms a bool into a 1/0 byte.
+func BoolToBit(val bool) byte {
 	if val {
 		return 1
 	}

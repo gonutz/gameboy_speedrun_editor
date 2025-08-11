@@ -30,7 +30,7 @@ type cgbPalette struct {
 // auto increment if bit 7 is set.
 func (pal *cgbPalette) updateIndex(value byte) {
 	pal.Index = value & 0x3F
-	pal.Inc = Test(value, 7)
+	pal.Inc = BitIsSet(value, 7)
 }
 
 // Read the palette information stored at the current index.

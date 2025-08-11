@@ -83,9 +83,9 @@ func (cpu *CPU) Init(cgb bool) {
 // Internally set the value of a flag on the flag register.
 func (cpu *CPU) setFlag(index byte, on bool) {
 	if on {
-		cpu.AF.SetLo(Set(cpu.AF.Lo(), index))
+		cpu.AF.SetLo(SetBit(cpu.AF.Lo(), index))
 	} else {
-		cpu.AF.SetLo(Reset(cpu.AF.Lo(), index))
+		cpu.AF.SetLo(ResetBit(cpu.AF.Lo(), index))
 	}
 }
 

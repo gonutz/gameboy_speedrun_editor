@@ -143,7 +143,7 @@ func (mem *Memory) WriteHighRam(gb *Gameboy, address uint16, value byte) {
 	case address == 0xFF4D:
 		// CGB speed change
 		if gb.IsCGB() {
-			gb.prepareSpeed = Test(value, 0)
+			gb.prepareSpeed = BitIsSet(value, 0)
 		}
 
 	case address == 0xFF4F:
@@ -342,7 +342,7 @@ func (mem *Memory) ReadHighRam(gb *Gameboy, address uint16) byte {
 
 	case address == 0xFF4D:
 		// Speed switch data
-		return gb.currentSpeed<<7 | B(gb.prepareSpeed)
+		return gb.currentSpeed<<7 | BoolToBit(gb.prepareSpeed)
 
 	case address == 0xFF4F:
 		return mem.VRAMBank
@@ -369,7 +369,7 @@ func (mem *Memory) doDMATransfer(gb *Gameboy, value byte) {
 
 // Start a CGB DMA transfer.
 func (mem *Memory) doNewDMATransfer(gb *Gameboy, value byte) {
-	if mem.hdmaActive && Val(value, 7) == 0 {
+	if mem.hdmaActive && BitValue(value, 7) == 0 {
 		// Abort a HDMA transfer
 		mem.hdmaActive = false
 		mem.HighRAM[0x55] |= 0x80 // Set bit 7

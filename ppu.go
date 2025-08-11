@@ -56,8 +56,8 @@ func (gb *Gameboy) setLCDStatus() {
 		status &= 252
 		// TODO: Check this is correct
 		// We aren't in a mode so reset the values
-		status = Reset(status, 0)
-		status = Reset(status, 1)
+		status = ResetBit(status, 0)
+		status = ResetBit(status, 1)
 		gb.Memory.Write(gb, 0xFF41, status)
 		return
 	}
@@ -72,18 +72,18 @@ func (gb *Gameboy) setLCDStatus() {
 	switch {
 	case currentLine >= 144:
 		mode = 1
-		status = Set(status, 0)
-		status = Reset(status, 1)
-		requestInterrupt = Test(status, 4)
+		status = SetBit(status, 0)
+		status = ResetBit(status, 1)
+		requestInterrupt = BitIsSet(status, 4)
 	case gb.scanlineCounter >= lcdMode2Bounds:
 		mode = 2
-		status = Reset(status, 0)
-		status = Set(status, 1)
-		requestInterrupt = Test(status, 5)
+		status = ResetBit(status, 0)
+		status = SetBit(status, 1)
+		requestInterrupt = BitIsSet(status, 5)
 	case gb.scanlineCounter >= lcdMode3Bounds:
 		mode = 3
-		status = Set(status, 0)
-		status = Set(status, 1)
+		status = SetBit(status, 0)
+		status = SetBit(status, 1)
 		if mode != currentMode {
 			// Draw the scanline when we start mode 3. In the real GameBoy
 			// this would be done throughout mode 3 by reading OAM and VRAM
@@ -92,9 +92,9 @@ func (gb *Gameboy) setLCDStatus() {
 		}
 	default:
 		mode = 0
-		status = Reset(status, 0)
-		status = Reset(status, 1)
-		requestInterrupt = Test(status, 3)
+		status = ResetBit(status, 0)
+		status = ResetBit(status, 1)
+		requestInterrupt = BitIsSet(status, 3)
 		if mode != currentMode {
 			gb.Memory.doHDMATransfer(gb)
 		}
@@ -106,13 +106,13 @@ func (gb *Gameboy) setLCDStatus() {
 
 	// Check if LYC == LY (coincidence flag)
 	if currentLine == gb.Memory.ReadHighRam(gb, 0xFF45) {
-		status = Set(status, 2)
+		status = SetBit(status, 2)
 		// If enabled request an interrupt for this
-		if Test(status, 6) {
+		if BitIsSet(status, 6) {
 			gb.requestInterrupt(1)
 		}
 	} else {
-		status = Reset(status, 2)
+		status = ResetBit(status, 2)
 	}
 
 	gb.Memory.Write(gb, 0xFF41, status)
@@ -120,7 +120,7 @@ func (gb *Gameboy) setLCDStatus() {
 
 // Checks if the LCD is enabled by examining 0xFF40.
 func (gb *Gameboy) isLCDEnabled() bool {
-	return Test(gb.Memory.ReadHighRam(gb, LCDC), 7)
+	return BitIsSet(gb.Memory.ReadHighRam(gb, LCDC), 7)
 }
 
 // Draw a single scanline to the graphics output.
@@ -128,11 +128,11 @@ func (gb *Gameboy) drawScanline(scanline byte) {
 	control := gb.Memory.ReadHighRam(gb, LCDC)
 
 	// LCDC bit 0 clears tiles on DMG but controls priority on CGB.
-	if gb.IsCGB() || Test(control, 0) {
+	if gb.IsCGB() || BitIsSet(control, 0) {
 		gb.renderTiles(control, scanline)
 	}
 
-	if Test(control, 1) {
+	if BitIsSet(control, 1) {
 		gb.renderSprites(control, int32(scanline))
 	}
 }
@@ -146,7 +146,7 @@ func (gb *Gameboy) getTileSettings(lcdControl byte, windowY byte) (
 ) {
 	tileData = uint16(0x8800)
 
-	if Test(lcdControl, 5) {
+	if BitIsSet(lcdControl, 5) {
 		// Is current scanline we're drawing within windows Y position?
 		if windowY <= gb.Memory.ReadHighRam(gb, 0xFF44) {
 			usingWindow = true
@@ -154,7 +154,7 @@ func (gb *Gameboy) getTileSettings(lcdControl byte, windowY byte) (
 	}
 
 	// Test if we're using unsigned bytes
-	if Test(lcdControl, 4) {
+	if BitIsSet(lcdControl, 4) {
 		tileData = 0x8000
 		unsigned = true
 	}
@@ -165,7 +165,7 @@ func (gb *Gameboy) getTileSettings(lcdControl byte, windowY byte) (
 		testBit = 6
 	}
 	backgroundMemory = uint16(0x9800)
-	if Test(lcdControl, testBit) {
+	if BitIsSet(lcdControl, testBit) {
 		backgroundMemory = 0x9C00
 	}
 	return
@@ -232,13 +232,13 @@ func (gb *Gameboy) renderTiles(lcdControl byte, scanline byte) {
 		//    Bit 7    BG-to-OAM Priority         (0=Use OAM priority bit, 1=BG Priority)
 		//
 		tileAttr := gb.Memory.VRAM[tileAddress-0x6000]
-		if gb.IsCGB() && Test(tileAttr, 3) {
+		if gb.IsCGB() && BitIsSet(tileAttr, 3) {
 			bankOffset = 0x6000
 		}
-		priority := Test(tileAttr, 7)
+		priority := BitIsSet(tileAttr, 7)
 
 		var line byte
-		if gb.IsCGB() && Test(tileAttr, 6) {
+		if gb.IsCGB() && BitIsSet(tileAttr, 6) {
 			// Vertical flip
 			line = ((7 - yPos) % 8) * 2
 		} else {
@@ -248,12 +248,12 @@ func (gb *Gameboy) renderTiles(lcdControl byte, scanline byte) {
 		data1 := gb.Memory.VRAM[tileLocation+uint16(line)-bankOffset]
 		data2 := gb.Memory.VRAM[tileLocation+uint16(line)+1-bankOffset]
 
-		if gb.IsCGB() && Test(tileAttr, 5) {
+		if gb.IsCGB() && BitIsSet(tileAttr, 5) {
 			// Horizontal flip
 			xPos = 7 - xPos
 		}
 		colourBit := byte(int8((xPos%8)-7) * -1)
-		colourNum := (Val(data2, colourBit) << 1) | Val(data1, colourBit)
+		colourNum := (BitValue(data2, colourBit) << 1) | BitValue(data1, colourBit)
 		gb.setTilePixel(pixel, scanline, tileAttr, colourNum, palette, priority)
 	}
 }
@@ -278,7 +278,7 @@ func (gb *Gameboy) setTilePixel(x, y, tileAttr, colourNum, palette byte, priorit
 func (gb *Gameboy) getColour(colourNum byte, palette byte) (uint8, uint8, uint8) {
 	hi := colourNum<<1 | 1
 	lo := colourNum << 1
-	col := (Val(palette, hi) << 1) | Val(palette, lo)
+	col := (BitValue(palette, hi) << 1) | BitValue(palette, lo)
 	c := ColorPalette[col]
 	return c[0], c[1], c[2]
 }
@@ -288,7 +288,7 @@ const spritePriorityOffset = 100
 // Render the sprites to the screen on the current scanline using the lcdControl register.
 func (gb *Gameboy) renderSprites(lcdControl byte, scanline int32) {
 	var ySize int32 = 8
-	if Test(lcdControl, 2) {
+	if BitIsSet(lcdControl, 2) {
 		ySize = 16
 	}
 
@@ -318,13 +318,13 @@ func (gb *Gameboy) renderSprites(lcdControl byte, scanline int32) {
 		tileLocation := gb.Memory.Read(gb, uint16(0xFE00+index+2))
 		attributes := gb.Memory.Read(gb, uint16(0xFE00+index+3))
 
-		yFlip := Test(attributes, 6)
-		xFlip := Test(attributes, 5)
-		priority := !Test(attributes, 7)
+		yFlip := BitIsSet(attributes, 6)
+		xFlip := BitIsSet(attributes, 5)
+		priority := !BitIsSet(attributes, 7)
 
 		// Bank the sprite data in is (CGB only)
 		var bank uint16 = 0
-		if gb.IsCGB() && Test(attributes, 3) {
+		if gb.IsCGB() && BitIsSet(attributes, 3) {
 			bank = 1
 		}
 
@@ -361,7 +361,7 @@ func (gb *Gameboy) renderSprites(lcdControl byte, scanline int32) {
 			}
 
 			// Find the colour value by combining the data bits
-			colourNum := (Val(data2, colourBit) << 1) | Val(data1, colourBit)
+			colourNum := (BitValue(data2, colourBit) << 1) | BitValue(data1, colourBit)
 
 			// Colour 0 is transparent for sprites
 			if colourNum == 0 {
@@ -375,7 +375,7 @@ func (gb *Gameboy) renderSprites(lcdControl byte, scanline int32) {
 			} else {
 				// Determine the colour palette to use
 				var palette = palette1
-				if Test(attributes, 4) {
+				if BitIsSet(attributes, 4) {
 					palette = palette2
 				}
 				red, green, blue := gb.getColour(colourNum, palette)

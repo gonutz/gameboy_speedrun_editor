@@ -130,7 +130,7 @@ func (gb *Gameboy) updateTimers(cycles int) {
 }
 
 func (gb *Gameboy) isClockEnabled() bool {
-	return Test(gb.Memory.Read(gb, TAC), 2)
+	return BitIsSet(gb.Memory.Read(gb, TAC), 2)
 }
 
 func (gb *Gameboy) getClockFreq() byte {
@@ -165,7 +165,7 @@ func (gb *Gameboy) dividerRegister(cycles int) {
 // Request the Gameboy to perform an interrupt.
 func (gb *Gameboy) requestInterrupt(interrupt byte) {
 	req := gb.Memory.ReadHighRam(gb, 0xFF0F)
-	req = Set(req, interrupt)
+	req = SetBit(req, interrupt)
 	gb.Memory.Write(gb, 0xFF0F, req)
 }
 
@@ -185,7 +185,7 @@ func (gb *Gameboy) doInterrupts() (cycles int) {
 	if req > 0 {
 		var i byte
 		for i = 0; i < 5; i++ {
-			if Test(req, i) && Test(enabled, i) {
+			if BitIsSet(req, i) && BitIsSet(enabled, i) {
 				gb.serviceInterrupt(i)
 				return 20
 			}
@@ -215,7 +215,7 @@ func (gb *Gameboy) serviceInterrupt(interrupt byte) {
 	gb.halted = false
 
 	req := gb.Memory.ReadHighRam(gb, 0xFF0F)
-	req = Reset(req, interrupt)
+	req = ResetBit(req, interrupt)
 	gb.Memory.Write(gb, 0xFF0F, req)
 
 	gb.pushStack(gb.CPU.PC)
@@ -241,9 +241,9 @@ func (gb *Gameboy) popStack() uint16 {
 
 func (gb *Gameboy) joypadValue(current byte) byte {
 	var in byte = 0xF
-	if Test(current, 4) {
+	if BitIsSet(current, 4) {
 		in = gb.inputMask & 0xF
-	} else if Test(current, 5) {
+	} else if BitIsSet(current, 5) {
 		in = (gb.inputMask >> 4) & 0xF
 	}
 	return current | 0xc0 | in

@@ -3,7 +3,7 @@ package main
 // Perform a ADD instruction on the values and store the value using the set
 // function. Will also update the CPU flags using the result of the operation.
 func (gb *Gameboy) instAdd(set func(byte), val1 byte, val2 byte, addCarry bool) {
-	carry := int16(B(gb.CPU.C() && addCarry))
+	carry := int16(BoolToBit(gb.CPU.C() && addCarry))
 	total := int16(val1) + int16(val2) + carry
 	set(byte(total))
 
@@ -16,7 +16,7 @@ func (gb *Gameboy) instAdd(set func(byte), val1 byte, val2 byte, addCarry bool) 
 // Perform a SUB operation on the values (val1 - val2) and store the result using
 // the set function. Will also update the CPU flags using the result of the operation.
 func (gb *Gameboy) instSub(set func(byte), val1 byte, val2 byte, addCarry bool) {
-	carry := int16(B(gb.CPU.C() && addCarry))
+	carry := int16(BoolToBit(gb.CPU.C() && addCarry))
 	dirtySum := int16(val1) - int16(val2) - carry
 	total := byte(dirtySum)
 	set(total)
