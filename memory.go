@@ -111,13 +111,6 @@ func (mem *Memory) WriteHighRam(address uint16, value byte) {
 		mem.gb.Sound.WriteWaveform(address, value)
 
 	case address == 0xFF02:
-		// Serial transfer control
-		if value == 0x81 {
-			f := mem.gb.options.transferFunction
-			if f != nil {
-				f(mem.ReadHighRam(0xFF01))
-			}
-		}
 
 	case address == DIV:
 		// Trap divider register

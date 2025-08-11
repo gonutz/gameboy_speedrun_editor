@@ -192,6 +192,7 @@ func (mon *PixelsIOBinding) ProcessInput() {
 	if mon.Gameboy.IsGameLoaded() && !mon.Gameboy.IsPaused() {
 		mon.processGBInput()
 	}
+
 	// Extra keys not related to emulation
 	for key, f := range extraKeyMap {
 		if mon.Window.JustPressed(key) {

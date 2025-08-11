@@ -55,14 +55,12 @@ func (reg *register) updateMask() {
 // CPU contains the registers used for program execution and
 // provides methods for setting flags.
 type CPU struct {
-	AF register
-	BC register
-	DE register
-	HL register
-
-	PC uint16
-	SP register
-
+	AF      register
+	BC      register
+	DE      register
+	HL      register
+	PC      uint16
+	SP      register
 	Divider int
 }
 

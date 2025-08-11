@@ -15,7 +15,7 @@ var CurrentPalette = PaletteBGB
 
 // Palettes is an mapping from colour palettes to their colour values
 // to be used by the emulator.
-var Palettes = [][][]byte{
+var Palettes = [][4][3]byte{
 	// PaletteGreyscale
 	{
 		{0xFF, 0xFF, 0xFF},

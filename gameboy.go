@@ -7,8 +7,8 @@ const (
 	ClockSpeed = 4194304
 	// FramesSecond is the target number of frames for each frame of GameBoy output.
 	FramesSecond = 60
-	// CyclesFrame is the number of CPU cycles in each frame.
-	CyclesFrame = ClockSpeed / FramesSecond
+	// CyclesPerFrame is the number of CPU cycles in each frame.
+	CyclesPerFrame = ClockSpeed / FramesSecond
 )
 
 // Gameboy is the master struct which contains all of the sub components
@@ -68,7 +68,7 @@ func (gb *Gameboy) Update() int {
 	}
 
 	cycles := 0
-	for cycles < CyclesFrame*gb.getSpeed() {
+	for cycles < CyclesPerFrame*gb.getSpeed() {
 		cyclesOp := 4
 		if !gb.halted {
 			if gb.Debug.OutputOpcodes {
