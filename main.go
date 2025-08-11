@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"strconv"
-	"strings"
 	"time"
 
 	"golang.org/x/image/font"
@@ -299,24 +298,20 @@ func runEditor() {
 					}
 
 					inputs := frameInputs[frameIndex]
-					text := strconv.Itoa(frameIndex) + " "
+					text := strconv.Itoa(frameIndex)
 					add := func(b Button, pressed string) {
 						if inputs[b] {
-							text += pressed
-						} else {
-							text += strings.ToLower(pressed)
+							text += " " + pressed
 						}
 					}
-					add(ButtonLeft, "L")
-					add(ButtonUp, "U")
-					add(ButtonRight, "R")
-					add(ButtonDown, "D")
-					text += " "
+					add(ButtonLeft, "<")
+					add(ButtonUp, "^")
+					add(ButtonRight, ">")
+					add(ButtonDown, "v")
 					add(ButtonA, "A")
 					add(ButtonB, "B")
-					text += " "
-					add(ButtonSelect, "E")
-					add(ButtonStart, "S")
+					add(ButtonSelect, "Sel")
+					add(ButtonStart, "Start")
 
 					textWidth := len(text) * charWidth
 					drawer.Dot = fixed.P(offsetX+(frameWidth-textWidth)/2, offsetY-1)
