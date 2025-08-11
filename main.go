@@ -57,11 +57,14 @@ func runEditor() {
 
 	// frameInputs holds the state of all the Gameboy buttons for each frame.
 	var frameInputs [][buttonCount]bool
+	var defaultInputs [buttonCount]bool
 	var gameboyStates []Gameboy
 	// emulateFromIndex is the first frame that needs to be emulated again
 	// because its state has changed. All frames after this (and including it)
 	// need to be emulated again.
 	emulateFromIndex := 0
+
+	frameShiftCountdown := 0
 
 	for !win.Closed() {
 		if win.JustPressed(pixelgl.KeyEscape) {
@@ -72,24 +75,33 @@ func runEditor() {
 
 		// Handle inputs.
 
-		if win.Pressed(pixelgl.KeyLeft) {
+		frameShiftCountdown--
+		shiftFrames := func(key pixelgl.Button) bool {
+			if win.JustPressed(key) || win.Pressed(key) && frameShiftCountdown <= 0 {
+				frameShiftCountdown = 8
+				return true
+			}
+			return false
+		}
+		if shiftFrames(pixelgl.KeyLeft) {
 			leftMostFrame = max(0, leftMostFrame-1)
 		}
-		if win.Pressed(pixelgl.KeyRight) {
+		if shiftFrames(pixelgl.KeyRight) {
 			leftMostFrame++
 		}
-		if win.Pressed(pixelgl.KeyUp) {
+		if shiftFrames(pixelgl.KeyUp) {
 			leftMostFrame = max(0, leftMostFrame-10)
 		}
-		if win.Pressed(pixelgl.KeyDown) {
+		if shiftFrames(pixelgl.KeyDown) {
 			leftMostFrame += 10
 		}
-		if win.Pressed(pixelgl.KeyPageUp) {
+		if shiftFrames(pixelgl.KeyPageUp) {
 			leftMostFrame = max(0, leftMostFrame-100)
 		}
-		if win.Pressed(pixelgl.KeyPageDown) {
+		if shiftFrames(pixelgl.KeyPageDown) {
 			leftMostFrame += 100
 		}
+
 		if win.JustPressed(pixelgl.KeyHome) {
 			leftMostFrame = 0
 		}
@@ -106,9 +118,19 @@ func runEditor() {
 			pixelgl.KeyS: ButtonStart,
 			pixelgl.KeyE: ButtonSelect,
 		}
+		shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
 		for key, b := range keyMap {
 			if win.JustPressed(key) {
-				frameInputs[leftMostFrame][b] = !frameInputs[leftMostFrame][b]
+				down := !frameInputs[leftMostFrame][b]
+				frameInputs[leftMostFrame][b] = down
+
+				if shiftDown {
+					defaultInputs[b] = down
+					for i := leftMostFrame + 1; i < len(frameInputs); i++ {
+						frameInputs[i][b] = down
+					}
+				}
+
 				emulateFromIndex = leftMostFrame
 				needToRender = true
 			}
@@ -143,7 +165,7 @@ func runEditor() {
 
 		simulateFrame := func(frameIndex int) {
 			for frameIndex >= len(frameInputs) {
-				frameInputs = append(frameInputs, [buttonCount]bool{})
+				frameInputs = append(frameInputs, defaultInputs)
 			}
 
 			for frameIndex >= len(gameboyStates) {
