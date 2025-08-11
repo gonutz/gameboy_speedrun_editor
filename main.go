@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"flag"
 	"image"
 	"image/color"
@@ -8,6 +10,7 @@ import (
 	"image/png"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -65,6 +68,60 @@ func runEditor() {
 	emulateFromIndex := 0
 
 	frameShiftCountdown := 0
+
+	bitsToInput := func(bits byte) [buttonCount]bool {
+		var b [buttonCount]bool
+		for i := range buttonCount {
+			b[i] = bits&(1<<i) != 0
+		}
+		return b
+	}
+
+	inputToBits := func(inputs [buttonCount]bool) byte {
+		var b byte
+		for i := range buttonCount {
+			if inputs[i] {
+				b += 1 << i
+			}
+		}
+		return b
+	}
+
+	lastSessionPath := filepath.Join(os.Getenv("APPDATA"), "gameboy.speedrun")
+
+	loadLastSpeedrun := func() {
+		if data, err := os.ReadFile(lastSessionPath); err == nil {
+			rest := data
+
+			leftMostFrame = int(binary.LittleEndian.Uint32(rest))
+			rest = rest[4:]
+
+			defaultInputs = bitsToInput(rest[0])
+			rest = rest[1:]
+
+			frameInputs = make([][buttonCount]bool, len(rest))
+			for i := range frameInputs {
+				frameInputs[i] = bitsToInput(rest[i])
+			}
+		}
+	}
+
+	saveCurrentSpeedrun := func() {
+		var buf bytes.Buffer
+
+		binary.Write(&buf, binary.LittleEndian, uint32(leftMostFrame))
+
+		buf.WriteByte(inputToBits(defaultInputs))
+
+		for _, inputs := range frameInputs {
+			buf.WriteByte(inputToBits(inputs))
+		}
+
+		os.WriteFile(lastSessionPath, buf.Bytes(), 0666)
+	}
+
+	loadLastSpeedrun()
+	defer saveCurrentSpeedrun()
 
 	for !win.Closed() {
 		if win.JustPressed(pixelgl.KeyEscape) {
@@ -169,14 +226,14 @@ func runEditor() {
 			}
 
 			for frameIndex >= len(gameboyStates) {
-				if frameIndex == 0 {
+				nextFrame := len(gameboyStates)
+				if nextFrame == 0 {
 					gb, _ := NewGameboy(rom)
 					updateGameboy(&gb, 0)
 					gameboyStates = append(gameboyStates, gb)
 				} else {
-					n := len(gameboyStates) - 1
-					gb := gameboyStates[n]
-					updateGameboy(&gb, n+1)
+					gb := gameboyStates[nextFrame-1]
+					updateGameboy(&gb, nextFrame)
 					gameboyStates = append(gameboyStates, gb)
 				}
 			}
