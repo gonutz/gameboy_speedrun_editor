@@ -54,6 +54,7 @@ func runEditor() {
 	win.SetPos(pixel.Vec{X: 200, Y: 150})
 
 	leftMostFrame := 0
+	activeFrameOffset := 0
 	var pixels []uint8
 
 	// frameInputs holds the state of all the Gameboy buttons for each frame.
@@ -121,10 +122,20 @@ func runEditor() {
 	loadLastSpeedrun()
 	defer saveCurrentSpeedrun()
 
+	const frameWidth = 1 + ScreenWidth + 1
+	const frameHeight = 13 + ScreenHeight + 1
+
 	for !win.Closed() {
 		if win.JustPressed(pixelgl.KeyEscape) {
 			win.SetClosed(true)
 		}
+
+		canvas := win.Canvas()
+		canvasSize := canvas.Bounds().Size()
+		canvasWidth, canvasHeight := int(canvasSize.X), int(canvasSize.Y)
+
+		frameCountX := canvasWidth / frameWidth
+		frameCountY := canvasHeight / frameHeight
 
 		lastLeftMostFrame := leftMostFrame
 
@@ -163,6 +174,27 @@ func runEditor() {
 
 		needToRender := leftMostFrame != lastLeftMostFrame
 
+		// Update the active frame (potentially).
+		lastActiveFrameOffset := activeFrameOffset
+
+		if win.JustPressed(pixelgl.MouseButton1) {
+			mouse := win.MousePosition()
+			mouseX := int(mouse.X)
+			mouseY := canvasHeight - 1 - int(mouse.Y)
+			frameX := mouseX / frameWidth
+			frameY := mouseY / frameHeight
+
+			if 0 <= frameX && frameX < frameCountX &&
+				0 <= frameY && frameY < frameCountY {
+				activeFrameOffset = frameY*frameCountX + frameX
+			}
+		}
+
+		maxActiveFrameOffset := frameCountX*frameCountY - 1
+		activeFrameOffset = min(activeFrameOffset, maxActiveFrameOffset)
+
+		needToRender = needToRender || activeFrameOffset != lastActiveFrameOffset
+
 		keyMap := map[pixelgl.Button]Button{
 			pixelgl.KeyL: ButtonLeft,
 			pixelgl.KeyU: ButtonUp,
@@ -176,32 +208,29 @@ func runEditor() {
 		shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
 		for key, b := range keyMap {
 			if win.JustPressed(key) {
-				down := !frameInputs[leftMostFrame][b]
-				frameInputs[leftMostFrame][b] = down
+				frameIndex := leftMostFrame + activeFrameOffset
+				down := !frameInputs[frameIndex][b]
+				frameInputs[frameIndex][b] = down
 
 				if shiftDown {
 					defaultInputs[b] = down
-					for i := leftMostFrame + 1; i < len(frameInputs); i++ {
+					for i := frameIndex + 1; i < len(frameInputs); i++ {
 						frameInputs[i][b] = down
 					}
 				}
 
-				emulateFromIndex = leftMostFrame
+				emulateFromIndex = frameIndex
 				needToRender = true
 			}
 		}
 
 		// Render the state.
 
-		canvas := win.Canvas()
-		canvasSize := canvas.Bounds().Size()
-		canvasWidth, canvasHeight := int(canvasSize.X), int(canvasSize.Y)
 		wantPixelLen := canvasWidth * canvasHeight * 4
-
 		needToRecreatePixels := len(pixels) != wantPixelLen
 
 		if needToRecreatePixels {
-			pixels = make([]uint8, canvasWidth*canvasHeight*4)
+			pixels = make([]uint8, wantPixelLen)
 			needToRender = true
 		}
 
@@ -257,12 +286,6 @@ func runEditor() {
 				pixels[i] = 0
 			}
 
-			frameWidth := 1 + ScreenWidth + 1
-			frameHeight := 13 + ScreenHeight + 1
-
-			frameCountX := canvasWidth / frameWidth
-			frameCountY := canvasHeight / frameHeight
-
 			img := &image.RGBA{
 				Pix:    pixels,
 				Stride: canvasWidth * 4,
@@ -275,6 +298,17 @@ func runEditor() {
 				Src:  image.NewUniform(color.White),
 				Face: basicfont.Face7x13,
 			}
+
+			activeFrameX := activeFrameOffset % frameCountX
+			activeFrameY := activeFrameOffset / frameCountX
+			activeFrameBounds := image.Rect(
+				activeFrameX*frameWidth,
+				activeFrameY*frameHeight,
+				(activeFrameX+1)*frameWidth,
+				(activeFrameY+1)*frameHeight,
+			)
+			border := image.NewUniform(color.RGBA{255, 0, 0, 255})
+			draw.Draw(img, activeFrameBounds, border, image.Point{}, draw.Src)
 
 			frameIndex := leftMostFrame
 			for frameY := range frameCountY {
