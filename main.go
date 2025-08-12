@@ -334,7 +334,9 @@ func runEditor() {
 			pixels = invertY(pixels, canvasWidth, canvasHeight)
 		}
 
-		canvas.SetPixels(pixels)
+		if len(pixels) > 0 {
+			canvas.SetPixels(pixels)
+		}
 
 		win.Update()
 	}
