@@ -103,7 +103,6 @@ func (mon *PixelsIOBinding) Destroy() {
 // SetTitle sets the title of the game window.
 func (mon *PixelsIOBinding) SetTitle(fps int) {
 	title := "GoBoy"
-	title += fmt.Sprintf(" - %s", mon.Gameboy.Memory.Cart.GetName())
 	if fps != 0 {
 		title += fmt.Sprintf(" (FPS: %2v)", fps)
 	}

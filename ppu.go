@@ -18,19 +18,19 @@ func (gb *Gameboy) updateGraphics(cycles int) {
 	if !gb.isLCDEnabled() {
 		return
 	}
-	gb.scanlineCounter -= cycles
+	gb.ScanlineCounter -= int32(cycles)
 
-	if gb.scanlineCounter <= 0 {
+	if gb.ScanlineCounter <= 0 {
 		gb.Memory.HighRAM[0x44]++
 		if gb.Memory.HighRAM[0x44] > 153 {
-			gb.PreparedData = gb.screenData
-			gb.screenData = [ScreenWidth][ScreenHeight][3]uint8{}
-			gb.bgPriority = [ScreenWidth][ScreenHeight]bool{}
+			gb.PreparedData = gb.ScreenData
+			gb.ScreenData = [ScreenWidth][ScreenHeight][3]uint8{}
+			gb.BGPriority = [ScreenWidth][ScreenHeight]bool{}
 			gb.Memory.HighRAM[0x44] = 0
 		}
 
 		currentLine := gb.Memory.ReadHighRam(gb, 0xFF44)
-		gb.scanlineCounter += 456 * gb.getSpeed()
+		gb.ScanlineCounter += int32(456 * gb.getSpeed())
 
 		if currentLine == ScreenHeight {
 			gb.requestInterrupt(0)
@@ -51,7 +51,7 @@ func (gb *Gameboy) setLCDStatus() {
 		// set the screen to white
 		gb.clearScreen()
 
-		gb.scanlineCounter = 456
+		gb.ScanlineCounter = 456
 		gb.Memory.HighRAM[0x44] = 0
 		status &= 252
 		// TODO: Check this is correct
@@ -61,7 +61,7 @@ func (gb *Gameboy) setLCDStatus() {
 		gb.Memory.Write(gb, 0xFF41, status)
 		return
 	}
-	gb.screenCleared = false
+	gb.ScreenCleared = false
 
 	currentLine := gb.Memory.ReadHighRam(gb, 0xFF44)
 	currentMode := status & 0x3
@@ -75,12 +75,12 @@ func (gb *Gameboy) setLCDStatus() {
 		status = SetBit(status, 0)
 		status = ResetBit(status, 1)
 		requestInterrupt = BitIsSet(status, 4)
-	case gb.scanlineCounter >= lcdMode2Bounds:
+	case gb.ScanlineCounter >= lcdMode2Bounds:
 		mode = 2
 		status = ResetBit(status, 0)
 		status = SetBit(status, 1)
 		requestInterrupt = BitIsSet(status, 5)
-	case gb.scanlineCounter >= lcdMode3Bounds:
+	case gb.ScanlineCounter >= lcdMode3Bounds:
 		mode = 3
 		status = SetBit(status, 0)
 		status = SetBit(status, 1)
@@ -196,7 +196,7 @@ func (gb *Gameboy) renderTiles(lcdControl byte, scanline byte) {
 	var palette = gb.Memory.ReadHighRam(gb, 0xFF47)
 
 	// start drawing the 160 horizontal pixels for this scanline
-	gb.tileScanline = [160]uint8{}
+	gb.TileScanline = [160]uint8{}
 	for pixel := byte(0); pixel < 160; pixel++ {
 		xPos := pixel + scrollX
 
@@ -264,14 +264,14 @@ func (gb *Gameboy) setTilePixel(x, y, tileAttr, colourNum, palette byte, priorit
 		cgbPalette := tileAttr & 0x7
 		red, green, blue := gb.BGPalette.get(cgbPalette, colourNum)
 		gb.setPixel(x, y, red, green, blue, true)
-		gb.bgPriority[x][y] = priority
+		gb.BGPriority[x][y] = priority
 	} else {
 		red, green, blue := gb.getColour(colourNum, palette)
 		gb.setPixel(x, y, red, green, blue, true)
 	}
 
 	// Store for the current scanline so sprite priority can be managed
-	gb.tileScanline[x] = colourNum
+	gb.TileScanline[x] = colourNum
 }
 
 // Get the RGB colour value for a colour num at an address using the current palette.
@@ -391,30 +391,30 @@ func (gb *Gameboy) renderSprites(lcdControl byte, scanline int32) {
 // Set a pixel in the graphics screen data.
 func (gb *Gameboy) setPixel(x byte, y byte, r uint8, g uint8, b uint8, priority bool) {
 	// If priority is false then sprite pixel is only set if tile colour is 0
-	if (priority && !gb.bgPriority[x][y]) || gb.tileScanline[x] == 0 {
-		gb.screenData[x][y][0] = r
-		gb.screenData[x][y][1] = g
-		gb.screenData[x][y][2] = b
+	if (priority && !gb.BGPriority[x][y]) || gb.TileScanline[x] == 0 {
+		gb.ScreenData[x][y][0] = r
+		gb.ScreenData[x][y][1] = g
+		gb.ScreenData[x][y][2] = b
 	}
 }
 
 // Clear the screen by setting every pixel to white.
 func (gb *Gameboy) clearScreen() {
 	// Check if we have cleared the screen already
-	if gb.screenCleared {
+	if gb.ScreenCleared {
 		return
 	}
 
 	// Set every pixel to white
-	for x := 0; x < len(gb.screenData); x++ {
-		for y := 0; y < len(gb.screenData[x]); y++ {
-			gb.screenData[x][y][0] = 255
-			gb.screenData[x][y][1] = 255
-			gb.screenData[x][y][2] = 255
+	for x := 0; x < len(gb.ScreenData); x++ {
+		for y := 0; y < len(gb.ScreenData[x]); y++ {
+			gb.ScreenData[x][y][0] = 255
+			gb.ScreenData[x][y][1] = 255
+			gb.ScreenData[x][y][2] = 255
 		}
 	}
 
 	// Push the cleared data right now
-	gb.PreparedData = gb.screenData
-	gb.screenCleared = true
+	gb.PreparedData = gb.ScreenData
+	gb.ScreenCleared = true
 }

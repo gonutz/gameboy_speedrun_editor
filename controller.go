@@ -1,16 +1,13 @@
 package main
 
 import (
-	"archive/zip"
-	"errors"
-	"io/ioutil"
 	"log"
-	"strings"
+	"os"
 	"time"
 )
 
 // Mode represents the types of mode the GameBoy can run in.
-type Mode int
+type Mode byte
 
 const (
 	// DMG is the mode for the original GameBoy.
@@ -19,15 +16,17 @@ const (
 	CGB
 )
 
-type memoryBankType int
+type MemoryBankType byte
 
 const (
-	romOnly memoryBankType = iota
+	romOnly MemoryBankType = iota
 	mbc1
 	mbc2
 	mbc3
 	mbc5
 )
+
+var globalROM []byte
 
 // Cart represents a GameBoy cartridge.
 //
@@ -36,67 +35,64 @@ const (
 // writing data to the cartridge, along with extra functionality such as RTC (real
 // time clock).
 type Cart struct {
-	title      string
-	filename   string
-	mode       Mode
-	memoryBank memoryBankType
-	rom        []byte
-	romBank    uint32
-	romBanking bool
-	ram        [0x20000]byte
-	ramBank    uint32
-	ramEnabled bool
-	rtc        [0x10]byte
-	latchedRtc [0x10]byte
-	latched    bool
+	Mode       Mode
+	MemoryBank MemoryBankType
+	ROMBank    uint32
+	ROMBanking bool
+	RAM        [0x20000]byte
+	RAMBank    uint32
+	RAMEnabled bool
+	RTC        [0x10]byte
+	LatchedRtc [0x10]byte
+	Latched    bool
 }
 
 // Read returns a value at a memory address in the ROM.
 func (c *Cart) Read(address uint16) byte {
-	switch c.memoryBank {
+	switch c.MemoryBank {
 	case romOnly:
-		return c.rom[address]
+		return globalROM[address]
 	case mbc1:
 		switch {
 		case address < 0x4000:
-			return c.rom[address] // Bank 0 is fixed
+			return globalROM[address] // Bank 0 is fixed
 		case address < 0x8000:
-			return c.rom[uint32(address-0x4000)+(c.romBank*0x4000)] // Use selected rom bank
+			return globalROM[uint32(address-0x4000)+(c.ROMBank*0x4000)] // Use selected rom bank
 		default:
-			return c.ram[(0x2000*c.ramBank)+uint32(address-0xA000)] // Use selected ram bank
+			return c.RAM[(0x2000*c.RAMBank)+uint32(address-0xA000)] // Use selected ram bank
 		}
 	case mbc2:
 		switch {
 		case address < 0x4000:
-			return c.rom[address] // Bank 0 is fixed
+			return globalROM[address] // Bank 0 is fixed
 		case address < 0x8000:
-			return c.rom[uint32(address-0x4000)+(c.romBank*0x4000)] // Use selected rom bank
+			return globalROM[uint32(address-0x4000)+(c.ROMBank*0x4000)] // Use selected rom bank
 		default:
-			return c.ram[address-0xA000] // Use ram
+			return c.RAM[address-0xA000] // Use ram
 		}
 	case mbc3:
 		switch {
 		case address < 0x4000:
-			return c.rom[address] // Bank 0 is fixed
+			return globalROM[address] // Bank 0 is fixed
 		case address < 0x8000:
-			return c.rom[uint32(address-0x4000)+(c.romBank*0x4000)] // Use selected rom bank
+			return globalROM[uint32(address-0x4000)+(c.ROMBank*0x4000)] // Use selected rom bank
 		default:
-			if c.ramBank >= 0x4 {
-				if c.latched {
-					return c.latchedRtc[c.ramBank]
+			if c.RAMBank >= 0x4 {
+				if c.Latched {
+					return c.LatchedRtc[c.RAMBank]
 				}
-				return c.rtc[c.ramBank]
+				return c.RTC[c.RAMBank]
 			}
-			return c.ram[(0x2000*c.ramBank)+uint32(address-0xA000)] // Use selected ram bank
+			return c.RAM[(0x2000*c.RAMBank)+uint32(address-0xA000)] // Use selected ram bank
 		}
 	case mbc5:
 		switch {
 		case address < 0x4000:
-			return c.rom[address] // Bank 0 is fixed
+			return globalROM[address] // Bank 0 is fixed
 		case address < 0x8000:
-			return c.rom[uint32(address-0x4000)+(c.romBank*0x4000)] // Use selected rom bank
+			return globalROM[uint32(address-0x4000)+(c.ROMBank*0x4000)] // Use selected rom bank
 		default:
-			return c.ram[(0x2000*c.ramBank)+uint32(address-0xA000)] // Use selected ram bank
+			return c.RAM[(0x2000*c.RAMBank)+uint32(address-0xA000)] // Use selected ram bank
 		}
 	default:
 		panic("unknown memory bank type")
@@ -104,42 +100,42 @@ func (c *Cart) Read(address uint16) byte {
 }
 
 func (c *Cart) updateRomBankIfZero() {
-	if c.romBank == 0x00 || c.romBank == 0x20 || c.romBank == 0x40 || c.romBank == 0x60 {
-		c.romBank++
+	if c.ROMBank == 0x00 || c.ROMBank == 0x20 || c.ROMBank == 0x40 || c.ROMBank == 0x60 {
+		c.ROMBank++
 	}
 }
 
 func (c *Cart) WriteROM(address uint16, value byte) {
-	switch c.memoryBank {
+	switch c.MemoryBank {
 	case romOnly:
 	case mbc1:
 		switch {
 		case address < 0x2000:
 			// RAM enable
 			if value&0xF == 0xA {
-				c.ramEnabled = true
+				c.RAMEnabled = true
 			} else if value&0xF == 0x0 {
-				c.ramEnabled = false
+				c.RAMEnabled = false
 			}
 		case address < 0x4000:
 			// ROM bank number (lower 5)
-			c.romBank = (c.romBank & 0xe0) | uint32(value&0x1f)
+			c.ROMBank = (c.ROMBank & 0xe0) | uint32(value&0x1f)
 			c.updateRomBankIfZero()
 		case address < 0x6000:
 			// ROM/RAM banking
-			if c.romBanking {
-				c.romBank = (c.romBank & 0x1F) | uint32(value&0xe0)
+			if c.ROMBanking {
+				c.ROMBank = (c.ROMBank & 0x1F) | uint32(value&0xe0)
 				c.updateRomBankIfZero()
 			} else {
-				c.ramBank = uint32(value & 0x3)
+				c.RAMBank = uint32(value & 0x3)
 			}
 		case address < 0x8000:
 			// ROM/RAM select mode
-			c.romBanking = value&0x1 == 0x00
-			if c.romBanking {
-				c.ramBank = 0
+			c.ROMBanking = value&0x1 == 0x00
+			if c.ROMBanking {
+				c.RAMBank = 0
 			} else {
-				c.romBank = c.romBank & 0x1F
+				c.ROMBank = c.ROMBank & 0x1F
 			}
 		}
 	case mbc2:
@@ -148,18 +144,18 @@ func (c *Cart) WriteROM(address uint16, value byte) {
 			// RAM enable
 			if address&0x100 == 0 {
 				if value&0xF == 0xA {
-					c.ramEnabled = true
+					c.RAMEnabled = true
 				} else if value&0xF == 0x0 {
-					c.ramEnabled = false
+					c.RAMEnabled = false
 				}
 			}
 			return
 		case address < 0x4000:
 			// ROM bank number (lower 4)
 			if address&0x100 == 0x100 {
-				c.romBank = uint32(value & 0xF)
-				if c.romBank == 0x00 || c.romBank == 0x20 || c.romBank == 0x40 || c.romBank == 0x60 {
-					c.romBank++
+				c.ROMBank = uint32(value & 0xF)
+				if c.ROMBank == 0x00 || c.ROMBank == 0x20 || c.ROMBank == 0x40 || c.ROMBank == 0x60 {
+					c.ROMBank++
 				}
 			}
 			return
@@ -168,21 +164,21 @@ func (c *Cart) WriteROM(address uint16, value byte) {
 		switch {
 		case address < 0x2000:
 			// RAM enable
-			c.ramEnabled = (value & 0xA) != 0
+			c.RAMEnabled = (value & 0xA) != 0
 		case address < 0x4000:
 			// ROM bank number (lower 5)
-			c.romBank = uint32(value & 0x7F)
-			if c.romBank == 0x00 {
-				c.romBank++
+			c.ROMBank = uint32(value & 0x7F)
+			if c.ROMBank == 0x00 {
+				c.ROMBank++
 			}
 		case address < 0x6000:
-			c.ramBank = uint32(value)
+			c.RAMBank = uint32(value)
 		case address < 0x8000:
 			if value == 0x1 {
-				c.latched = false
+				c.Latched = false
 			} else if value == 0x0 {
-				c.latched = true
-				copy(c.rtc[:], c.latchedRtc[:])
+				c.Latched = true
+				copy(c.RTC[:], c.LatchedRtc[:])
 			}
 		}
 	case mbc5:
@@ -190,18 +186,18 @@ func (c *Cart) WriteROM(address uint16, value byte) {
 		case address < 0x2000:
 			// RAM enable
 			if value&0xF == 0xA {
-				c.ramEnabled = true
+				c.RAMEnabled = true
 			} else if value&0xF == 0x0 {
-				c.ramEnabled = false
+				c.RAMEnabled = false
 			}
 		case address < 0x3000:
 			// ROM bank number
-			c.romBank = (c.romBank & 0x100) | uint32(value)
+			c.ROMBank = (c.ROMBank & 0x100) | uint32(value)
 		case address < 0x4000:
 			// ROM/RAM banking
-			c.romBank = (c.romBank & 0xFF) | uint32(value&0x01)<<8
+			c.ROMBank = (c.ROMBank & 0xFF) | uint32(value&0x01)<<8
 		case address < 0x6000:
-			c.ramBank = uint32(value & 0xF)
+			c.RAMBank = uint32(value & 0xF)
 		}
 	default:
 		panic("unknown memory bank type")
@@ -209,27 +205,27 @@ func (c *Cart) WriteROM(address uint16, value byte) {
 }
 
 func (c *Cart) WriteRAM(address uint16, value byte) {
-	switch c.memoryBank {
+	switch c.MemoryBank {
 	case romOnly:
 	case mbc1:
-		if c.ramEnabled {
-			c.ram[(0x2000*c.ramBank)+uint32(address-0xA000)] = value
+		if c.RAMEnabled {
+			c.RAM[(0x2000*c.RAMBank)+uint32(address-0xA000)] = value
 		}
 	case mbc2:
-		if c.ramEnabled {
-			c.ram[address-0xA000] = value & 0xF
+		if c.RAMEnabled {
+			c.RAM[address-0xA000] = value & 0xF
 		}
 	case mbc3:
-		if c.ramEnabled {
-			if c.ramBank >= 0x4 {
-				c.rtc[c.ramBank] = value
+		if c.RAMEnabled {
+			if c.RAMBank >= 0x4 {
+				c.RTC[c.RAMBank] = value
 			} else {
-				c.ram[(0x2000*c.ramBank)+uint32(address-0xA000)] = value
+				c.RAM[(0x2000*c.RAMBank)+uint32(address-0xA000)] = value
 			}
 		}
 	case mbc5:
-		if c.ramEnabled {
-			c.ram[(0x2000*c.ramBank)+uint32(address-0xA000)] = value
+		if c.RAMEnabled {
+			c.RAM[(0x2000*c.RAMBank)+uint32(address-0xA000)] = value
 		}
 	default:
 		panic("unknown memory bank type")
@@ -237,56 +233,39 @@ func (c *Cart) WriteRAM(address uint16, value byte) {
 }
 
 func (c *Cart) GetSaveData() []byte {
-	switch c.memoryBank {
+	switch c.MemoryBank {
 	case romOnly:
 		return []byte{}
 	default:
-		data := make([]byte, len(c.ram))
-		copy(data, c.ram[:])
+		data := make([]byte, len(c.RAM))
+		copy(data, c.RAM[:])
 		return data
 	}
 }
 
 func (c *Cart) LoadSaveData(data []byte) {
-	switch c.memoryBank {
+	switch c.MemoryBank {
 	case romOnly:
 	default:
-		copy(c.ram[:], data)
+		copy(c.RAM[:], data)
 	}
-}
-
-// GetName returns the name of the cartridge. This is retrieved from the memory location
-// [0x134,0x142) on the cartridge. The function will cache the result of the read from
-// the cartridge.
-func (c *Cart) GetName() string {
-	if c.title == "" {
-		// We have not loaded the ROM name yet, so go get it
-		for i := uint16(0x134); i < 0x142; i++ {
-			chr := c.Read(i)
-			if chr != 0x00 {
-				c.title += string(chr)
-			}
-		}
-		c.title = strings.TrimSpace(c.title)
-	}
-	return c.title
 }
 
 // GetSaveFilename returns the name of the file that the game should be saved to. This is
 // used for saving and loading save data to the cartridge.
 // TODO: do something better here
 func (c *Cart) GetSaveFilename() string {
-	return c.filename + ".sav"
+	return "" // TODO Remove this.
 }
 
 // GetMode returns the modes that this cart can run in.
 func (c *Cart) GetMode() Mode {
-	return c.mode
+	return c.Mode
 }
 
 // Attempt to load a save game from the expected location.
 func (c *Cart) initGameSaves() {
-	saveData, err := ioutil.ReadFile(c.GetSaveFilename())
+	saveData, err := os.ReadFile(c.GetSaveFilename())
 	if err == nil {
 		c.LoadSaveData(saveData)
 	}
@@ -304,7 +283,7 @@ func (c *Cart) initGameSaves() {
 func (c *Cart) Save() {
 	data := c.GetSaveData()
 	if len(data) > 0 {
-		err := ioutil.WriteFile(c.GetSaveFilename(), data, 0644)
+		err := os.WriteFile(c.GetSaveFilename(), data, 0644)
 		if err != nil {
 			log.Printf("Error saving cartridge RAM: %v", err)
 		}
@@ -313,7 +292,7 @@ func (c *Cart) Save() {
 
 // NewCartFromFile loads a cartridge ROM from a file.
 func NewCartFromFile(filename string) (Cart, error) {
-	rom, err := loadROMData(filename)
+	rom, err := os.ReadFile(filename)
 	if err != nil {
 		return Cart{}, err
 	}
@@ -359,44 +338,42 @@ func NewCartFromFile(filename string) (Cart, error) {
 //	0xFE  HuC3
 //	0xFF  HuC1+RAM+BATTERY
 func NewCart(rom []byte, filename string) Cart {
-	cartridge := Cart{
-		filename: filename,
-	}
+	cartridge := Cart{}
 
 	// Check for GB mode
 	switch rom[0x0143] {
 	case 0x80:
-		cartridge.mode = DMG | CGB
+		cartridge.Mode = DMG | CGB
 	case 0xC0:
-		cartridge.mode = CGB
+		cartridge.Mode = CGB
 	default:
-		cartridge.mode = DMG
+		cartridge.Mode = DMG
 	}
 
-	cartridge.rom = rom
-	cartridge.romBank = 1
+	globalROM = rom
+	cartridge.ROMBank = 1
 
 	// Determine cartridge type
 	mbcFlag := rom[0x147]
 	switch mbcFlag {
 	case 0x00, 0x08, 0x09, 0x0B, 0x0C, 0x0D:
-		cartridge.memoryBank = romOnly
+		cartridge.MemoryBank = romOnly
 	default:
 		switch {
 		case mbcFlag <= 0x03:
-			cartridge.memoryBank = mbc1
+			cartridge.MemoryBank = mbc1
 		case mbcFlag <= 0x06:
-			cartridge.memoryBank = mbc2
+			cartridge.MemoryBank = mbc2
 		case mbcFlag <= 0x13:
-			cartridge.memoryBank = mbc3
+			cartridge.MemoryBank = mbc3
 		case mbcFlag < 0x17:
 			log.Println("Warning: MBC4 carts are not supported.")
-			cartridge.memoryBank = mbc1
+			cartridge.MemoryBank = mbc1
 		case mbcFlag < 0x1F:
-			cartridge.memoryBank = mbc5
+			cartridge.MemoryBank = mbc5
 		default:
 			log.Printf("Warning: This cart may not be supported: %02x", mbcFlag)
-			cartridge.memoryBank = mbc1
+			cartridge.MemoryBank = mbc1
 		}
 	}
 
@@ -405,38 +382,4 @@ func NewCart(rom []byte, filename string) Cart {
 		cartridge.initGameSaves()
 	}
 	return cartridge
-}
-
-// Open the file and load the data out of it as an array of bytes. If the file is
-// a zip file containing one file, then open that as the rom instead.
-func loadROMData(filename string) ([]byte, error) {
-	var data []byte
-	if strings.HasSuffix(filename, ".zip") {
-		return loadZIPData(filename)
-	}
-	// Load the file as a rom
-	var err error
-	data, err = ioutil.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-// Load a zip file with a single rom in it.
-func loadZIPData(filename string) ([]byte, error) {
-	// Load the rom from a zip file
-	reader, err := zip.OpenReader(filename)
-	if err != nil {
-		return nil, err
-	}
-	if len(reader.File) != 1 {
-		return nil, errors.New("zip must contain one file")
-	}
-	f := reader.File[0]
-	fo, err := f.Open()
-	if err != nil {
-		return nil, err
-	}
-	return ioutil.ReadAll(fo)
 }

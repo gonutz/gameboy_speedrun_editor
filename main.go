@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"flag"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -39,7 +40,12 @@ func main() {
 }
 
 func runEditor() {
-	rom := getROM()
+	romFile := getROM()
+
+	rom, err := os.ReadFile(romFile)
+	check(err)
+
+	globalROM = rom
 
 	const windowWidth, windowHeight = 1500, 800
 	win, err := pixelgl.NewWindow(pixelgl.WindowConfig{
@@ -60,7 +66,15 @@ func runEditor() {
 	// frameInputs holds the state of all the Gameboy buttons for each frame.
 	var frameInputs [][buttonCount]bool
 	var defaultInputs [buttonCount]bool
-	var gameboyStates []Gameboy
+
+	const keyFrameInterval = 100
+	var keyFrameStates []Gameboy
+
+	// We generate Gameboy screens to be display in our editor.
+	// screenBuffer is a temporary buffer that we reuse in every frame.
+	type gameboyScreen [ScreenWidth][ScreenHeight][3]uint8
+	var screenBuffer []gameboyScreen
+
 	// emulateFromIndex is the first frame that needs to be emulated again
 	// because its state has changed. All frames after this (and including it)
 	// need to be emulated again.
@@ -87,36 +101,123 @@ func runEditor() {
 	}
 
 	lastSessionPath := filepath.Join(os.Getenv("APPDATA"), "gameboy.speedrun")
+	const sessionFileVersion = 1
 
 	loadLastSpeedrun := func() {
-		if data, err := os.ReadFile(lastSessionPath); err == nil {
-			rest := data
+		data, err := os.ReadFile(lastSessionPath)
+		if err != nil {
+			return
+		}
 
-			leftMostFrame = int(binary.LittleEndian.Uint32(rest))
+		rest := data
+		loadFailed := false
+		n := func() int {
+			if loadFailed || len(rest) < 4 {
+				loadFailed = true
+				return 0
+			}
+			n := binary.LittleEndian.Uint32(rest)
 			rest = rest[4:]
-
-			defaultInputs = bitsToInput(rest[0])
+			return int(n)
+		}
+		b := func() byte {
+			if loadFailed || len(rest) < 1 {
+				loadFailed = true
+				return 0
+			}
+			b := rest[0]
 			rest = rest[1:]
-
-			frameInputs = make([][buttonCount]bool, len(rest))
-			for i := range frameInputs {
-				frameInputs[i] = bitsToInput(rest[i])
+			return b
+		}
+		v := func(x any) {
+			if !loadFailed {
+				r := bytes.NewReader(rest)
+				lenBeforeRead := r.Len()
+				err := binary.Read(r, binary.LittleEndian, x)
+				if err != nil {
+					loadFailed = true
+				} else {
+					readCount := lenBeforeRead - r.Len()
+					rest = rest[readCount:]
+				}
 			}
 		}
+
+		if n() != sessionFileVersion {
+			// We currently only read the very lastest file version.
+			return
+		}
+		leftMostFrameTemp := n()
+		activeFrameOffsetTemp := n()
+		defaultInputsTemp := bitsToInput(b())
+		frameInputsTemp := make([][buttonCount]bool, n())
+		for i := range frameInputsTemp {
+			frameInputsTemp[i] = bitsToInput(b())
+		}
+		if keyFrameInterval != n() {
+			// We currently do not support different key frame intervals.
+			loadFailed = true
+		}
+		keyFrameStatesTemp := make([]Gameboy, n())
+		for i := range keyFrameStatesTemp {
+			v(&keyFrameStatesTemp[i])
+		}
+
+		if loadFailed {
+			fmt.Println("loading failed")
+			return
+		}
+
+		leftMostFrame = leftMostFrameTemp
+		activeFrameOffset = activeFrameOffsetTemp
+		defaultInputs = defaultInputsTemp
+		frameInputs = frameInputsTemp
+		keyFrameStates = keyFrameStatesTemp
+		emulateFromIndex = len(keyFrameStates) * keyFrameInterval
 	}
 
 	saveCurrentSpeedrun := func() {
+		// Create a buffer and helper functions:
+		// n() saves a number as uint32
+		// b() saves a single byte
+		// v() saves an arbitrary value.
 		var buf bytes.Buffer
-
-		binary.Write(&buf, binary.LittleEndian, uint32(leftMostFrame))
-
-		buf.WriteByte(inputToBits(defaultInputs))
-
-		for _, inputs := range frameInputs {
-			buf.WriteByte(inputToBits(inputs))
+		var saveErr error
+		setErr := func(err error) {
+			if saveErr == nil {
+				saveErr = err
+			}
+		}
+		n := func(n int) {
+			setErr(binary.Write(&buf, binary.LittleEndian, uint32(n)))
+		}
+		b := func(b byte) {
+			setErr(buf.WriteByte(b))
+		}
+		v := func(x any) {
+			setErr(binary.Write(&buf, binary.LittleEndian, x))
 		}
 
-		os.WriteFile(lastSessionPath, buf.Bytes(), 0666)
+		// Serialize the data.
+		n(sessionFileVersion)
+		n(leftMostFrame)
+		n(activeFrameOffset)
+		b(inputToBits(defaultInputs))
+		n(len(frameInputs))
+		for _, inputs := range frameInputs {
+			b(inputToBits(inputs))
+		}
+		n(keyFrameInterval)
+		n(len(keyFrameStates))
+		for _, s := range keyFrameStates {
+			v(s)
+		}
+
+		setErr(os.WriteFile(lastSessionPath, buf.Bytes(), 0666))
+
+		if saveErr != nil {
+			fmt.Println("error saving session file:", saveErr)
+		}
 	}
 
 	loadLastSpeedrun()
@@ -166,6 +267,10 @@ func runEditor() {
 		}
 		if shiftFrames(pixelgl.KeyPageDown) {
 			leftMostFrame += 100
+		}
+		scrollDelta := win.MouseScroll()
+		if scrollDelta.Y != 0 {
+			leftMostFrame = max(0, leftMostFrame-int(scrollDelta.Y))
 		}
 
 		if win.JustPressed(pixelgl.KeyHome) {
@@ -235,6 +340,10 @@ func runEditor() {
 		}
 
 		updateGameboy := func(gameboy *Gameboy, frameIndex int) {
+			for frameIndex >= len(frameInputs) {
+				frameInputs = append(frameInputs, defaultInputs)
+			}
+
 			inputs := frameInputs[frameIndex]
 			for b := range buttonCount {
 				if inputs[b] {
@@ -247,38 +356,52 @@ func runEditor() {
 			gameboy.Update()
 		}
 
-		simulateFrame := func(frameIndex int) {
-			for frameIndex >= len(frameInputs) {
-				frameInputs = append(frameInputs, defaultInputs)
-			}
+		emulateFrames := func(startFrame, endFrame int) []gameboyScreen {
+			screenBuffer = screenBuffer[:0]
 
-			for frameIndex >= len(gameboyStates) {
-				nextFrame := len(gameboyStates)
-				if nextFrame == 0 {
-					gb, _ := NewGameboy(rom, gameboyOptions{})
+			keyFrameIndex := startFrame / keyFrameInterval
+
+			// When inputs change we need to re-generate key frames after the
+			// change. We do this by simply removing those key frames from the
+			// array. They will be re-generated after that.
+			lastValidKeyFrame := (emulateFromIndex + keyFrameInterval - 1) / keyFrameInterval
+			lastValidKeyFrame = min(lastValidKeyFrame, len(keyFrameStates))
+			keyFrameStates = keyFrameStates[:lastValidKeyFrame]
+
+			// Create new keyframes if necessary.
+			for keyFrameIndex >= len(keyFrameStates) {
+				last := len(keyFrameStates) - 1
+
+				if last == -1 {
+					gb, _ := NewGameboy(rom, GameboyOptions{})
 					updateGameboy(&gb, 0)
-					gameboyStates = append(gameboyStates, gb)
+					keyFrameStates = append(keyFrameStates, gb)
 				} else {
-					gb := gameboyStates[nextFrame-1]
-					updateGameboy(&gb, nextFrame)
-					gameboyStates = append(gameboyStates, gb)
-				}
-			}
-
-			if frameIndex >= emulateFromIndex {
-				// Emulate all the obsolete states.
-				for i := emulateFromIndex; i <= frameIndex; i++ {
-					if i == 0 {
-						gameboyStates[0], _ = NewGameboy(rom, gameboyOptions{})
-						updateGameboy(&gameboyStates[0], 0)
-					} else {
-						gameboyStates[i] = gameboyStates[i-1]
-						updateGameboy(&gameboyStates[i], i)
+					gb := keyFrameStates[last]
+					for i := range keyFrameInterval {
+						updateGameboy(&gb, last*keyFrameInterval+i+1)
 					}
+					keyFrameStates = append(keyFrameStates, gb)
 				}
-
-				emulateFromIndex = frameIndex + 1
 			}
+
+			emulateFromIndex = len(keyFrameStates) * keyFrameInterval
+
+			gb := keyFrameStates[keyFrameIndex]
+
+			currentFrame := keyFrameIndex * keyFrameInterval
+			for currentFrame < startFrame {
+				currentFrame++
+				updateGameboy(&gb, currentFrame)
+			}
+
+			for currentFrame <= endFrame {
+				screenBuffer = append(screenBuffer, gb.PreparedData)
+				currentFrame++
+				updateGameboy(&gb, currentFrame)
+			}
+
+			return screenBuffer
 		}
 
 		if needToRender {
@@ -310,20 +433,26 @@ func runEditor() {
 			border := image.NewUniform(color.RGBA{255, 0, 0, 255})
 			draw.Draw(img, activeFrameBounds, border, image.Point{}, draw.Src)
 
+			lastVisibleFrame := leftMostFrame + frameCountX*frameCountY - 1
+
+			// We need to create the Gameboy screens for these frames:
+			// [leftMostFrame..lastVisibleFrame]
+			screens := emulateFrames(leftMostFrame, lastVisibleFrame)
+
 			frameIndex := leftMostFrame
 			for frameY := range frameCountY {
 				for frameX := range frameCountX {
 					offsetX := frameX*frameWidth + 1
 					offsetY := frameY*frameHeight + 13
 
-					simulateFrame(frameIndex)
-
+					screenIndex := frameIndex - leftMostFrame
+					screen := screens[screenIndex]
 					for y := range ScreenHeight {
 						for x := range ScreenWidth {
 							// TODO Possible optimization, index
 							// gameboy.PreparedData[y][x] and copy by scanline
 							// instead of by pixels.
-							c := gameboyStates[frameIndex].PreparedData[x][y]
+							c := screen[x][y]
 							destX := offsetX + x
 							destY := offsetY + y
 							dest := destX*4 + destY*canvasWidth*4
@@ -414,7 +543,9 @@ func start() {
 	monitor := NewPixelsIOBinding(*vsyncOff || *unlocked)
 
 	// Load the rom from the flag argument, or prompt with file select
-	rom := getROM()
+	romFile := getROM()
+	rom, err := os.ReadFile(romFile)
+	check(err)
 
 	// If the CPU profile flag is set, then setup the profiling
 	if *cpuprofile != "" {
@@ -422,9 +553,9 @@ func start() {
 		defer pprof.StopCPUProfile()
 	}
 
-	opts := gameboyOptions{
-		cgbMode: !*dmgMode,
-		sound:   !*mute,
+	opts := GameboyOptions{
+		CGBMode: !*dmgMode,
+		Sound:   !*mute,
 	}
 
 	// Initialise the GameBoy with the flag options

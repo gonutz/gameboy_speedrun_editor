@@ -1,67 +1,67 @@
 package main
 
-// Register represents a GB CPU 16bit register which provides functions
+// Register represents a GB CPU 16bit Register which provides functions
 // for setting and getting the higher and lower bytes.
-type register struct {
-	// The value of the register.
-	value uint16
+type Register struct {
+	// The Value of the register.
+	Value uint16
 
-	// A mask over the possible values in the register.
+	// A Mask over the possible values in the register.
 	// Only used for the AF register where lower bits of
 	// F cannot be set.
-	mask uint16
+	Mask uint16
 }
 
 // Hi gets the higher byte of the register.
-func (reg *register) Hi() byte {
-	return byte(reg.value >> 8)
+func (reg *Register) Hi() byte {
+	return byte(reg.Value >> 8)
 }
 
 // Lo gets the lower byte of the register.
-func (reg *register) Lo() byte {
-	return byte(reg.value & 0xFF)
+func (reg *Register) Lo() byte {
+	return byte(reg.Value & 0xFF)
 }
 
 // HiLo gets the 2 byte value of the register.
-func (reg *register) HiLo() uint16 {
-	return reg.value
+func (reg *Register) HiLo() uint16 {
+	return reg.Value
 }
 
 // SetHi sets the higher byte of the register.
-func (reg *register) SetHi(val byte) {
-	reg.value = uint16(val)<<8 | (uint16(reg.value) & 0xFF)
+func (reg *Register) SetHi(val byte) {
+	reg.Value = uint16(val)<<8 | (uint16(reg.Value) & 0xFF)
 	reg.updateMask()
 }
 
 // SetLog sets the lower byte of the register.
-func (reg *register) SetLo(val byte) {
-	reg.value = uint16(val) | (uint16(reg.value) & 0xFF00)
+func (reg *Register) SetLo(val byte) {
+	reg.Value = uint16(val) | (uint16(reg.Value) & 0xFF00)
 	reg.updateMask()
 }
 
 // Set the value of the register.
-func (reg *register) Set(val uint16) {
-	reg.value = val
+func (reg *Register) Set(val uint16) {
+	reg.Value = val
 	reg.updateMask()
 }
 
 // Mask the value if one is set on this register.
-func (reg *register) updateMask() {
-	if reg.mask != 0 {
-		reg.value &= reg.mask
+func (reg *Register) updateMask() {
+	if reg.Mask != 0 {
+		reg.Value &= reg.Mask
 	}
 }
 
 // CPU contains the registers used for program execution and
 // provides methods for setting flags.
 type CPU struct {
-	AF      register
-	BC      register
-	DE      register
-	HL      register
+	AF      Register
+	BC      Register
+	DE      Register
+	HL      Register
 	PC      uint16
-	SP      register
-	Divider int
+	SP      Register
+	Divider int32
 }
 
 // Init CPU and its registers to the initial values.
@@ -77,7 +77,7 @@ func (cpu *CPU) Init(cgb bool) {
 	cpu.HL.Set(0x000D)
 	cpu.SP.Set(0xFFFE)
 
-	cpu.AF.mask = 0xFFF0
+	cpu.AF.Mask = 0xFFF0
 }
 
 // Internally set the value of a flag on the flag register.

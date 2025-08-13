@@ -51,9 +51,9 @@ var (
 // updates the CPU ticks and executes the opcode.
 func (gb *Gameboy) ExecuteNextOpcode() int {
 	opcode := gb.popPC()
-	gb.thisCpuTicks = OpcodeCycles[opcode] * 4
+	gb.ThisCpuTicks = int32(OpcodeCycles[opcode] * 4)
 	mainInst[opcode](gb)
-	return gb.thisCpuTicks
+	return int(gb.ThisCpuTicks)
 }
 
 // Read the value at the PC and increment the PC.
@@ -984,11 +984,11 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 		},
 		0x76: func(gb *Gameboy) {
 			// HALT
-			gb.halted = true
+			gb.Halted = true
 		},
 		0x10: func(gb *Gameboy) {
 			// STOP
-			gb.halted = true
+			gb.Halted = true
 			if gb.IsCGB() {
 				// Handle switching to double speed mode
 				gb.checkSpeedSwitch()
@@ -1001,11 +1001,11 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 		},
 		0xF3: func(gb *Gameboy) {
 			// DI
-			gb.interruptsOn = false
+			gb.InterruptsOn = false
 		},
 		0xFB: func(gb *Gameboy) {
 			// EI
-			gb.interruptsEnabling = true
+			gb.InterruptsEnabling = true
 		},
 		0x07: func(gb *Gameboy) {
 			// RLCA
@@ -1064,7 +1064,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if !gb.CPU.Z() {
 				gb.instJump(next)
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0xCA: func(gb *Gameboy) {
@@ -1072,7 +1072,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if gb.CPU.Z() {
 				gb.instJump(next)
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0xD2: func(gb *Gameboy) {
@@ -1080,7 +1080,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if !gb.CPU.C() {
 				gb.instJump(next)
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0xDA: func(gb *Gameboy) {
@@ -1088,7 +1088,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if gb.CPU.C() {
 				gb.instJump(next)
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0xE9: func(gb *Gameboy) {
@@ -1106,7 +1106,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			if !gb.CPU.Z() {
 				addr := int32(gb.CPU.PC) + int32(next)
 				gb.instJump(uint16(addr))
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0x28: func(gb *Gameboy) {
@@ -1115,7 +1115,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			if gb.CPU.Z() {
 				addr := int32(gb.CPU.PC) + int32(next)
 				gb.instJump(uint16(addr))
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0x30: func(gb *Gameboy) {
@@ -1124,7 +1124,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			if !gb.CPU.C() {
 				addr := int32(gb.CPU.PC) + int32(next)
 				gb.instJump(uint16(addr))
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0x38: func(gb *Gameboy) {
@@ -1133,7 +1133,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			if gb.CPU.C() {
 				addr := int32(gb.CPU.PC) + int32(next)
 				gb.instJump(uint16(addr))
-				gb.thisCpuTicks += 4
+				gb.ThisCpuTicks += 4
 			}
 		},
 		0xCD: func(gb *Gameboy) {
@@ -1145,7 +1145,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if !gb.CPU.Z() {
 				gb.instCall(next)
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xCC: func(gb *Gameboy) {
@@ -1153,7 +1153,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if gb.CPU.Z() {
 				gb.instCall(next)
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xD4: func(gb *Gameboy) {
@@ -1161,7 +1161,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if !gb.CPU.C() {
 				gb.instCall(next)
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xDC: func(gb *Gameboy) {
@@ -1169,7 +1169,7 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			next := gb.popPC16()
 			if gb.CPU.C() {
 				gb.instCall(next)
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xC7: func(gb *Gameboy) {
@@ -1212,39 +1212,39 @@ func mainInstructions() [0x100]func(gb *Gameboy) {
 			// RET NZ
 			if !gb.CPU.Z() {
 				gb.instRet()
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xC8: func(gb *Gameboy) {
 			// RET Z
 			if gb.CPU.Z() {
 				gb.instRet()
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xD0: func(gb *Gameboy) {
 			// RET NC
 			if !gb.CPU.C() {
 				gb.instRet()
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xD8: func(gb *Gameboy) {
 			// RET C
 			if gb.CPU.C() {
 				gb.instRet()
-				gb.thisCpuTicks += 12
+				gb.ThisCpuTicks += 12
 			}
 		},
 		0xD9: func(gb *Gameboy) {
 			// RETI
 			gb.instRet()
-			gb.interruptsEnabling = true
+			gb.InterruptsEnabling = true
 		},
 		0xCB: func(gb *Gameboy) {
 			// CB
 			nextInst := gb.popPC()
-			gb.thisCpuTicks += CBOpcodeCycles[nextInst] * 4
+			gb.ThisCpuTicks += int32(CBOpcodeCycles[nextInst] * 4)
 			cbInst[nextInst](gb)
 		},
 	}

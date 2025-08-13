@@ -26,17 +26,14 @@ type Memory struct {
 	VRAM [0x4000]byte
 	// Index of the current VRAM bank
 	VRAMBank byte
-
 	// WRAM bank 0-7 data
 	WRAM [0x9000]byte
 	// Index of the current WRAM bank
 	WRAMBank byte
-
-	OAM [0x100]byte
-
+	OAM      [0x100]byte
 	// CGB HDMA transfer variables
-	hdmaLength byte
-	hdmaActive bool
+	HdmaLength byte
+	HdmaActive bool
 }
 
 // Init the gb memory to the post-boot values.
@@ -81,9 +78,9 @@ func (mem *Memory) Init(gameboy *Gameboy) {
 }
 
 // LoadCart load a cart rom into memory.
-func (mem *Memory) LoadCart(loc string) (bool, error) {
+func (mem *Memory) LoadCart(rom []byte) (bool, error) {
 	var err error
-	mem.Cart, err = NewCartFromFile(loc)
+	mem.Cart = NewCart(rom, "")
 	if err != nil {
 		return false, err
 	}
@@ -143,12 +140,12 @@ func (mem *Memory) WriteHighRam(gb *Gameboy, address uint16, value byte) {
 	case address == 0xFF4D:
 		// CGB speed change
 		if gb.IsCGB() {
-			gb.prepareSpeed = BitIsSet(value, 0)
+			gb.PrepareSpeed = BitIsSet(value, 0)
 		}
 
 	case address == 0xFF4F:
 		// VRAM bank (CGB only), blocked when HDMA is active
-		if gb.IsCGB() && !mem.hdmaActive {
+		if gb.IsCGB() && !mem.HdmaActive {
 			mem.VRAMBank = value & 0x1
 		}
 
@@ -342,7 +339,7 @@ func (mem *Memory) ReadHighRam(gb *Gameboy, address uint16) byte {
 
 	case address == 0xFF4D:
 		// Speed switch data
-		return gb.currentSpeed<<7 | BoolToBit(gb.prepareSpeed)
+		return gb.CurrentSpeed<<7 | BoolToBit(gb.PrepareSpeed)
 
 	case address == 0xFF4F:
 		return mem.VRAMBank
@@ -369,9 +366,9 @@ func (mem *Memory) doDMATransfer(gb *Gameboy, value byte) {
 
 // Start a CGB DMA transfer.
 func (mem *Memory) doNewDMATransfer(gb *Gameboy, value byte) {
-	if mem.hdmaActive && BitValue(value, 7) == 0 {
+	if mem.HdmaActive && BitValue(value, 7) == 0 {
 		// Abort a HDMA transfer
-		mem.hdmaActive = false
+		mem.HdmaActive = false
 		mem.HighRAM[0x55] |= 0x80 // Set bit 7
 		return
 	}
@@ -385,25 +382,25 @@ func (mem *Memory) doNewDMATransfer(gb *Gameboy, value byte) {
 		mem.HighRAM[0x55] = 0xFF
 	} else {
 		// Mode 1, H-Blank DMA
-		mem.hdmaLength = byte(value)
-		mem.hdmaActive = true
+		mem.HdmaLength = byte(value)
+		mem.HdmaActive = true
 	}
 }
 
 // Perform a HDMA transfer during a HBlank period.
 func (mem *Memory) doHDMATransfer(gb *Gameboy) {
-	if !mem.hdmaActive {
+	if !mem.HdmaActive {
 		return
 	}
 
 	mem.performNewDMATransfer(gb, 0x10)
-	if mem.hdmaLength > 0 {
-		mem.hdmaLength--
-		mem.HighRAM[0x55] = mem.hdmaLength
+	if mem.HdmaLength > 0 {
+		mem.HdmaLength--
+		mem.HighRAM[0x55] = mem.HdmaLength
 	} else {
 		// DMA has finished
 		mem.HighRAM[0x55] = 0xFF
-		mem.hdmaActive = false
+		mem.HdmaActive = false
 	}
 }
 
