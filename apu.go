@@ -317,10 +317,6 @@ var squareLimits = map[byte]float64{
 	3: 0.5,   // 75%   ( ______--______--______-- )
 }
 
-// WaveGenerator is a function which can be used for generating waveform
-// samples for different channels.
-// type WaveGenerator func(t float64) byte
-
 type WaveGeneratorType byte
 
 const (
