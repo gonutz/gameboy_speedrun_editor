@@ -294,7 +294,11 @@ func runEditor() {
 				emulatorGameboy = Gameboy{Options: opts}
 				emulatorGameboy.init(rom)
 
+				unmuteSound()
+
 				replayFrameIndex = 0
+			} else {
+				muteSound()
 			}
 		}
 

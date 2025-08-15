@@ -57,17 +57,26 @@ func (a *APU) Init(sound bool) {
 	a.Channel3 = NewChannel()
 	a.Channel4 = NewChannel()
 
-	if !globalSoundPlaying {
-		player, err := oto.NewPlayer(sampleRate, 1, 1, sampleRate/30)
-		if err != nil {
-			log.Fatalf("Failed to start audio: %v", err)
-		}
-		go a.play(player)
-		globalSoundPlaying = true
+	if globalSoundPlayer == nil {
+		var err error
+		globalSoundPlayer, err = oto.NewPlayer(sampleRate, 1, 1, sampleRate/30)
+		check(err)
+		go a.play(globalSoundPlayer)
 	}
 }
 
-var globalSoundPlaying = false
+var (
+	globalSoundPlayer *oto.Player
+	globalSoundMuted  = false
+)
+
+func muteSound() {
+	globalSoundMuted = true
+}
+
+func unmuteSound() {
+	globalSoundMuted = false
+}
 
 // Time in seconds which to buffer ahead of the emulation.
 const bufferTime = 0.05
@@ -86,11 +95,14 @@ func (a *APU) play(player *oto.Player) {
 
 		// Populate the buffer by sampling the channels
 		buffer := make([]byte, newSamples)
-		vol := (a.LeftVolume + a.RightVolume) / 10
-		for i := range buffer {
-			// TODO: output stereo channels instead of combining
-			val := (a.Channel1.Sample(a) + a.Channel2.Sample(a) + a.Channel3.Sample(a) + a.Channel4.Sample(a)) / 4
-			buffer[i] = byte(float64(val) * vol)
+
+		if !globalSoundMuted {
+			vol := (a.LeftVolume + a.RightVolume) / 10
+			for i := range buffer {
+				// TODO: output stereo channels instead of combining
+				val := (a.Channel1.Sample(a) + a.Channel2.Sample(a) + a.Channel3.Sample(a) + a.Channel4.Sample(a)) / 4
+				buffer[i] = byte(float64(val) * vol)
+			}
 		}
 
 		_, err := player.Write(buffer)
