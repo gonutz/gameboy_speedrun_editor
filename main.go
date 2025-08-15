@@ -275,11 +275,21 @@ func runEditor() {
 	}
 
 	for !win.Closed() {
+		toggleReplay := false
+
 		if win.JustPressed(pixelgl.KeyEscape) {
-			win.SetClosed(true)
+			if replayingGame {
+				toggleReplay = true
+			} else {
+				win.SetClosed(true)
+			}
 		}
 
 		if win.JustPressed(pixelgl.KeySpace) {
+			toggleReplay = true
+		}
+
+		if toggleReplay {
 			replayingGame = !replayingGame
 
 			if replayingGame {
