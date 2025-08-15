@@ -101,6 +101,7 @@ func runEditor() {
 	emulateFromIndex := 0
 
 	frameShiftCountdown := 0
+	movingFrameIndex := -1
 
 	bitsToInput := func(bits byte) [buttonCount]bool {
 		var b [buttonCount]bool
@@ -388,7 +389,30 @@ func runEditor() {
 				if 0 <= frameX && frameX < frameCountX &&
 					0 <= frameY && frameY < frameCountY {
 					activeFrameOffset = frameY*frameCountX + frameX
+					movingFrameIndex = leftMostFrame + activeFrameOffset
 				}
+			}
+
+			leftButtonDown := win.Pressed(pixelgl.MouseButton1)
+			if movingFrameIndex != -1 && leftButtonDown {
+				mouse := win.MousePosition()
+				mouseX := int(mouse.X)
+				mouseY := canvasHeight - 1 - int(mouse.Y)
+				frameX := mouseX / frameWidth
+				frameY := mouseY / frameHeight
+
+				if 0 <= frameX && frameX < frameCountX &&
+					0 <= frameY && frameY < frameCountY {
+					newActiveFrameOffset := frameY*frameCountX + frameX
+					if activeFrameOffset != newActiveFrameOffset {
+						leftMostFrame += activeFrameOffset - newActiveFrameOffset
+						activeFrameOffset = newActiveFrameOffset
+					}
+				}
+			}
+
+			if !leftButtonDown {
+				movingFrameIndex = -1
 			}
 
 			maxActiveFrameOffset := frameCountX*frameCountY - 1
