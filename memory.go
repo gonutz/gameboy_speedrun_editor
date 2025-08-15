@@ -78,13 +78,9 @@ func (mem *Memory) Init(gameboy *Gameboy) {
 }
 
 // LoadCart load a cart rom into memory.
-func (mem *Memory) LoadCart(rom []byte) (bool, error) {
-	var err error
+func (mem *Memory) LoadCart(rom []byte) bool {
 	mem.Cart = NewCart(rom, "")
-	if err != nil {
-		return false, err
-	}
-	return mem.Cart.GetMode()&CGB != 0, nil
+	return mem.Cart.GetMode()&CGB != 0
 }
 
 // WriteHighRam writes to the range 0xFF00-0xFFFF in the memory address

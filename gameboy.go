@@ -254,16 +254,10 @@ func (gb *Gameboy) IsCGB() bool {
 }
 
 // Initialise the Gameboy using a path to a rom.
-func (gb *Gameboy) init(rom []byte) error {
+func (gb *Gameboy) init(rom []byte) {
 	gb.setup()
-
-	// Load the ROM file
-	hasCGB, err := gb.Memory.LoadCart(rom)
-	if err != nil {
-		return fmt.Errorf("failed to open rom file: %s", err)
-	}
+	hasCGB := gb.Memory.LoadCart(rom)
 	gb.CGBMode = gb.Options.CGBMode && hasCGB
-	return nil
 }
 
 // Setup and instantitate the gameboys components.
@@ -292,11 +286,8 @@ type GameboyOptions struct {
 }
 
 // NewGameboy returns a new Gameboy instance.
-func NewGameboy(rom []byte, opts GameboyOptions) (Gameboy, error) {
+func NewGameboy(rom []byte, opts GameboyOptions) Gameboy {
 	gameboy := Gameboy{Options: opts}
-	err := gameboy.init(rom)
-	if err != nil {
-		return Gameboy{}, err
-	}
-	return gameboy, nil
+	gameboy.init(rom)
+	return gameboy
 }

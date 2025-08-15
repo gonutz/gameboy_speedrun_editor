@@ -287,9 +287,11 @@ func runEditor() {
 					Sound:   !*mute,
 				}
 
-				var err error
-				emulatorGameboy, err = NewGameboy(rom, opts)
-				check(err)
+				// TODO NewGameboy does not have sound, but the other way (which
+				// just inlines what NewGameboy actually does) will have sound.
+				// emulatorGameboy, err = NewGameboy(rom, opts)
+				emulatorGameboy = Gameboy{Options: opts}
+				emulatorGameboy.init(rom)
 
 				replayFrameIndex = 0
 			}
@@ -450,7 +452,7 @@ func runEditor() {
 					last := len(keyFrameStates) - 1
 
 					if last == -1 {
-						gb, _ := NewGameboy(rom, GameboyOptions{})
+						gb := NewGameboy(rom, GameboyOptions{})
 						updateGameboy(&gb, 0)
 						keyFrameStates = append(keyFrameStates, gb)
 					} else {
@@ -637,11 +639,7 @@ func start() {
 	}
 
 	// Initialise the GameBoy with the flag options
-	gameboy, err := NewGameboy(rom, opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+	gameboy := NewGameboy(rom, opts)
 	monitor.Gameboy = &gameboy
 	startGBLoop(&gameboy, monitor)
 }
