@@ -552,9 +552,6 @@ func runEditor() {
 						screen := screens[screenIndex]
 						for y := range ScreenHeight {
 							for x := range ScreenWidth {
-								// TODO Possible optimization, index
-								// gameboy.PreparedData[y][x] and copy by scanline
-								// instead of by pixels.
 								c := screen[x][y]
 								destX := offsetX + x
 								destY := offsetY + y

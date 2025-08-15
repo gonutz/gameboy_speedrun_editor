@@ -33,6 +33,10 @@ type APU struct {
 
 // Init the sound emulation for a Gameboy.
 func (a *APU) Init(sound bool) {
+	if !sound {
+		return
+	}
+
 	for i := range a.WaveformRam {
 		a.WaveformRam[i] = 0
 	}
@@ -53,14 +57,17 @@ func (a *APU) Init(sound bool) {
 	a.Channel3 = NewChannel()
 	a.Channel4 = NewChannel()
 
-	if sound {
+	if !globalSoundPlaying {
 		player, err := oto.NewPlayer(sampleRate, 1, 1, sampleRate/30)
 		if err != nil {
 			log.Fatalf("Failed to start audio: %v", err)
 		}
 		go a.play(player)
+		globalSoundPlaying = true
 	}
 }
+
+var globalSoundPlaying = false
 
 // Time in seconds which to buffer ahead of the emulation.
 const bufferTime = 0.05
@@ -86,8 +93,8 @@ func (a *APU) play(player *oto.Player) {
 			buffer[i] = byte(float64(val) * vol)
 		}
 
-		// TODO: handle error
-		player.Write(buffer)
+		_, err := player.Write(buffer)
+		check(err)
 	}
 }
 
