@@ -106,6 +106,11 @@ func runEditor() {
 	infoText := ""
 	infoTextColor := color.RGBA{255, 255, 255, 255}
 
+	setInfo := func(msg string) {
+		infoText = msg
+		infoTextColor = color.RGBA{255, 255, 255, 255}
+	}
+
 	setWarning := func(msg string) {
 		infoText = msg
 		infoTextColor = color.RGBA{255, 92, 92, 255}
@@ -280,11 +285,13 @@ func runEditor() {
 	for !win.Closed() {
 		toggleReplay := false
 
+		lastInfoText := infoText
+
 		if win.JustPressed(pixelgl.KeyEscape) {
 			if replayingGame {
 				toggleReplay = true
-			} else {
-				win.SetClosed(true)
+			} else if infoText != "" {
+				resetInfoText()
 			}
 		}
 
@@ -360,6 +367,26 @@ func runEditor() {
 
 			// Handle inputs.
 
+			for i := range 10 {
+				if win.JustPressed(pixelgl.Key0+pixelgl.Button(i)) ||
+					win.JustPressed(pixelgl.KeyKP0+pixelgl.Button(i)) {
+					_, err := strconv.Atoi(infoText)
+					isNumber := err == nil
+					if !isNumber {
+						resetInfoText()
+					}
+					// At this point we have a number in infoText or infoText is
+					// empty. If infoText is empty, we cannot type a zero, only
+					// [1-9]. Zero can be typed only after other digits.
+					if i > 0 || infoText != "" {
+						setInfo(infoText + strconv.Itoa(i))
+					}
+				}
+			}
+
+			repeatCount, _ := strconv.Atoi(infoText)
+			repeatCount = max(repeatCount, 1)
+
 			frameShiftCountdown--
 			shiftFrames := func(key pixelgl.Button) bool {
 				if win.JustPressed(key) || win.Pressed(key) && frameShiftCountdown <= 0 {
@@ -369,22 +396,22 @@ func runEditor() {
 				return false
 			}
 			if shiftFrames(pixelgl.KeyLeft) {
-				leftMostFrame = max(0, leftMostFrame-1)
+				leftMostFrame = max(0, leftMostFrame-repeatCount)
 			}
 			if shiftFrames(pixelgl.KeyRight) {
-				leftMostFrame++
+				leftMostFrame += repeatCount
 			}
 			if shiftFrames(pixelgl.KeyUp) {
-				leftMostFrame = max(0, leftMostFrame-10)
+				leftMostFrame = max(0, leftMostFrame-10*repeatCount)
 			}
 			if shiftFrames(pixelgl.KeyDown) {
-				leftMostFrame += 10
+				leftMostFrame += 10 * repeatCount
 			}
 			if shiftFrames(pixelgl.KeyPageUp) {
-				leftMostFrame = max(0, leftMostFrame-100)
+				leftMostFrame = max(0, leftMostFrame-100*repeatCount)
 			}
 			if shiftFrames(pixelgl.KeyPageDown) {
-				leftMostFrame += 100
+				leftMostFrame += 100 * repeatCount
 			}
 			scrollDelta := win.MouseScroll()
 			if scrollDelta.Y != 0 {
@@ -439,7 +466,8 @@ func runEditor() {
 
 			needToRender := leftMostFrame != lastLeftMostFrame ||
 				activeFrameOffset != lastActiveFrameOffset ||
-				replayingGame != lastReplayingGame
+				replayingGame != lastReplayingGame ||
+				lastInfoText != infoText
 
 			if leftMostFrame != lastLeftMostFrame ||
 				activeFrameOffset != lastActiveFrameOffset {
@@ -456,7 +484,9 @@ func runEditor() {
 				pixelgl.KeyS: ButtonStart,
 				pixelgl.KeyE: ButtonSelect,
 			}
+
 			shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
+
 			for key, b := range keyMap {
 				if win.JustPressed(key) {
 					resetInfoText()
@@ -482,7 +512,12 @@ func runEditor() {
 						}
 					} else {
 						// Toggle button for the active frame.
-						frameInputs[frameIndex][b] = down
+						for frameIndex+repeatCount > len(frameInputs) {
+							frameInputs = append(frameInputs, defaultInputs)
+						}
+						for i := range repeatCount {
+							frameInputs[frameIndex+i][b] = down
+						}
 					}
 
 					emulateFromIndex = frameIndex
