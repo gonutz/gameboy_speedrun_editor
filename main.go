@@ -103,22 +103,16 @@ func runEditor() {
 	frameShiftCountdown := 0
 	movingFrameIndex := -1
 
-	bitsToInput := func(bits byte) [buttonCount]bool {
-		var b [buttonCount]bool
-		for i := range buttonCount {
-			b[i] = bits&(1<<i) != 0
-		}
-		return b
+	infoText := ""
+	infoTextColor := color.RGBA{255, 255, 255, 255}
+
+	setWarning := func(msg string) {
+		infoText = msg
+		infoTextColor = color.RGBA{255, 92, 92, 255}
 	}
 
-	inputToBits := func(inputs [buttonCount]bool) byte {
-		var b byte
-		for i := range buttonCount {
-			if inputs[i] {
-				b += 1 << i
-			}
-		}
-		return b
+	resetInfoText := func() {
+		infoText = ""
 	}
 
 	lastSessionPath := filepath.Join(os.Getenv("APPDATA"), "gameboy.speedrun")
@@ -274,6 +268,15 @@ func runEditor() {
 		gameboy.Update()
 	}
 
+	const (
+		charWidth   = 7
+		charHeight  = 13
+		fontDescend = 3
+	)
+	textRenderer := font.Drawer{
+		Face: basicfont.Face7x13,
+	}
+
 	for !win.Closed() {
 		toggleReplay := false
 
@@ -289,8 +292,12 @@ func runEditor() {
 			toggleReplay = true
 		}
 
+		lastReplayingGame := replayingGame
+
 		if toggleReplay {
 			replayingGame = !replayingGame
+
+			resetInfoText()
 
 			if replayingGame {
 				opts := GameboyOptions{
@@ -388,8 +395,6 @@ func runEditor() {
 				leftMostFrame = 0
 			}
 
-			needToRender := leftMostFrame != lastLeftMostFrame
-
 			// Update the active frame (potentially).
 			lastActiveFrameOffset := activeFrameOffset
 
@@ -432,7 +437,14 @@ func runEditor() {
 			maxActiveFrameOffset := frameCountX*frameCountY - 1
 			activeFrameOffset = min(activeFrameOffset, maxActiveFrameOffset)
 
-			needToRender = needToRender || activeFrameOffset != lastActiveFrameOffset
+			needToRender := leftMostFrame != lastLeftMostFrame ||
+				activeFrameOffset != lastActiveFrameOffset ||
+				replayingGame != lastReplayingGame
+
+			if leftMostFrame != lastLeftMostFrame ||
+				activeFrameOffset != lastActiveFrameOffset {
+				resetInfoText()
+			}
 
 			keyMap := map[pixelgl.Button]Button{
 				pixelgl.KeyL: ButtonLeft,
@@ -447,15 +459,30 @@ func runEditor() {
 			shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
 			for key, b := range keyMap {
 				if win.JustPressed(key) {
+					resetInfoText()
+
 					frameIndex := leftMostFrame + activeFrameOffset
 					down := !frameInputs[frameIndex][b]
-					frameInputs[frameIndex][b] = down
 
 					if shiftDown {
-						defaultInputs[b] = down
-						for i := frameIndex + 1; i < len(frameInputs); i++ {
-							frameInputs[i][b] = down
+						// Toggle button for all the future if we do not
+						// overwrite any existing future button of this kind.
+						canToggle := true
+						for i := frameIndex + 2; i < len(frameInputs); i++ {
+							canToggle = canToggle && frameInputs[i][b] == frameInputs[i-1][b]
 						}
+
+						if canToggle {
+							for i := frameIndex; i < len(frameInputs); i++ {
+								frameInputs[i][b] = down
+							}
+							defaultInputs[b] = down
+						} else {
+							setWarning("Cannot toggle button, it is already used in the future.")
+						}
+					} else {
+						// Toggle button for the active frame.
+						frameInputs[frameIndex][b] = down
 					}
 
 					emulateFromIndex = frameIndex
@@ -532,12 +559,8 @@ func runEditor() {
 					Rect:   image.Rect(0, 0, canvasWidth, canvasHeight),
 				}
 
-				const charWidth = 7
-				drawer := font.Drawer{
-					Dst:  img,
-					Src:  image.NewUniform(color.White),
-					Face: basicfont.Face7x13,
-				}
+				textRenderer.Dst = img
+				textRenderer.Src = image.NewUniform(color.White)
 
 				activeFrameX := activeFrameOffset % frameCountX
 				activeFrameY := activeFrameOffset / frameCountX
@@ -591,8 +614,8 @@ func runEditor() {
 						add(ButtonStart, "Start")
 
 						textWidth := len(text) * charWidth
-						drawer.Dot = fixed.P(offsetX+(frameWidth-textWidth)/2, offsetY-1)
-						drawer.DrawString(text)
+						textRenderer.Dot = fixed.P(offsetX+(frameWidth-textWidth)/2, offsetY-1)
+						textRenderer.DrawString(text)
 
 						frameIndex++
 					}
@@ -607,6 +630,22 @@ func runEditor() {
 				background := image.NewUniform(color.Black)
 				draw.Draw(img, rightEdge, background, image.Point{}, draw.Src)
 				draw.Draw(img, bottomEdge, background, image.Point{}, draw.Src)
+
+				if infoText != "" {
+					infoTextWidth := len(infoText) * charWidth
+					infoTextHeight := charHeight
+					infoTextRect := image.Rect(
+						canvasWidth-infoTextWidth-1,
+						canvasHeight-infoTextHeight-1,
+						canvasWidth,
+						canvasHeight,
+					)
+					draw.Draw(img, infoTextRect, background, image.Point{}, draw.Src)
+
+					textRenderer.Src = image.NewUniform(infoTextColor)
+					textRenderer.Dot = fixed.P(infoTextRect.Min.X+1, canvasHeight-fontDescend+1)
+					textRenderer.DrawString(infoText)
+				}
 
 				pixels = invertY(pixels, canvasWidth, canvasHeight)
 			}
@@ -636,6 +675,23 @@ func invertY(pixels []uint8, w, h int) []uint8 {
 	return pixels
 }
 
+func bitsToInput(bits byte) [buttonCount]bool {
+	var b [buttonCount]bool
+	for i := range buttonCount {
+		b[i] = bits&(1<<i) != 0
+	}
+	return b
+}
+
+func inputToBits(inputs [buttonCount]bool) byte {
+	var b byte
+	for i := range buttonCount {
+		if inputs[i] {
+			b += 1 << i
+		}
+	}
+	return b
+}
 func saveScreenshot(gameboy *Gameboy, path string) {
 	f, err := os.Create(path)
 	check(err)
