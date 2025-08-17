@@ -660,45 +660,66 @@ func runEditor() {
 				textRenderer.Dst = img
 				textRenderer.Src = image.NewUniform(color.White)
 
-				activeFrameX, activeFrameY := 0, 0
-				if frameCountX > 0 {
-					activeFrameX = activeFrameOffset % frameCountX
-					activeFrameY = activeFrameOffset / frameCountX
-				}
-				activeFrameBounds := image.Rect(
-					activeFrameX*frameWidth,
-					activeFrameY*frameHeight,
-					(activeFrameX+1)*frameWidth,
-					(activeFrameY+1)*frameHeight,
-				)
-				border := image.NewUniform(color.RGBA{255, 0, 0, 255})
-				draw.Draw(img, activeFrameBounds, border, image.Point{}, draw.Src)
-
-				lastVisibleFrame := leftMostFrame + frameCountX*frameCountY - 1
-
 				// We need to create the Gameboy screens for these frames:
 				// [leftMostFrame..lastVisibleFrame]
+				lastVisibleFrame := leftMostFrame + frameCountX*frameCountY - 1
 				screens := emulateFrames(leftMostFrame, lastVisibleFrame)
 
 				frameIndex := leftMostFrame
 				for frameY := range frameCountY {
 					for frameX := range frameCountX {
-						offsetX := frameX*frameWidth + 1
-						offsetY := frameY*frameHeight + 13
+						screenOffsetX := frameX*frameWidth + 1
+						screenOffsetY := frameY*frameHeight + 13
+						inputs := frameInputs[frameIndex]
 
+						// Render the frame border.
+						frameBounds := image.Rect(
+							frameX*frameWidth,
+							frameY*frameHeight,
+							(frameX+1)*frameWidth,
+							(frameY+1)*frameHeight,
+						)
+
+						// Determine color by button state for this frame.
+						borderColor := color.RGBA{0, 0, 0, 255}
+						arrowKeyDown := inputs[ButtonLeft] || inputs[ButtonRight] || inputs[ButtonUp] || inputs[ButtonDown]
+						if arrowKeyDown {
+							borderColor.G = 128
+						}
+						if inputs[ButtonA] || inputs[ButtonStart] || inputs[ButtonSelect] {
+							borderColor.B = 192
+						}
+						if inputs[ButtonB] {
+							borderColor.R = 192
+						}
+
+						border := image.NewUniform(borderColor)
+						// TODO Instead of filling all of the frame first, only
+						// fill the edges that are not overwritten by the
+						// Gameboy screen.
+						draw.Draw(img, frameBounds, border, image.Point{}, draw.Src)
+
+						// Render the Gameboy screen.
+						isActiveFrame := frameIndex == leftMostFrame+activeFrameOffset
 						screenIndex := frameIndex - leftMostFrame
 						screen := screens[screenIndex]
 						for y := range ScreenHeight {
 							for x := range ScreenWidth {
 								c := screen[x][y]
-								destX := offsetX + x
-								destY := offsetY + y
+								if isActiveFrame {
+									// Make the active frame brighter.
+									c[0] = byte(min(255, int(c[0])+60))
+									c[1] = byte(min(255, int(c[1])+10))
+									c[2] = byte(min(255, int(c[2])+10))
+								}
+								destX := screenOffsetX + x
+								destY := screenOffsetY + y
 								dest := destX*4 + destY*canvasWidth*4
 								copy(pixels[dest:], c[:])
 							}
 						}
 
-						inputs := frameInputs[frameIndex]
+						// Render the text above the frame.
 						text := strconv.Itoa(frameIndex)
 						add := func(b Button, pressed string) {
 							if inputs[b] {
@@ -715,7 +736,7 @@ func runEditor() {
 						add(ButtonStart, "Start")
 
 						textWidth := len(text) * charWidth
-						textRenderer.Dot = fixed.P(offsetX+(frameWidth-textWidth)/2, offsetY-1)
+						textRenderer.Dot = fixed.P(screenOffsetX+(frameWidth-textWidth)/2, screenOffsetY-1)
 						textRenderer.DrawString(text)
 
 						frameIndex++
