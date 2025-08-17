@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"math"
 	"math/rand"
 	"time"
@@ -41,17 +40,6 @@ func (a *APU) Init(sound bool) {
 		a.WaveformRam[i] = 0
 	}
 
-	// Sets waveform ram to:
-	// 00 FF 00 FF  00 FF 00 FF  00 FF 00 FF  00 FF 00 FF
-	for x := 0x0; x < 0x20; x++ {
-		if x&2 == 0 {
-			a.WaveformRam[x] = 0x00
-		} else {
-			a.WaveformRam[x] = 0xFF
-		}
-	}
-
-	// Create the channels with their sounds
 	a.Channel1 = NewChannel()
 	a.Channel2 = NewChannel()
 	a.Channel3 = NewChannel()
@@ -222,21 +210,6 @@ func (a *APU) WriteWaveform(address uint16, value byte) {
 	soundIndex := (address - 0xFF30) * 2
 	a.WaveformRam[soundIndex] = byte((value>>4)&0xF) * 0x11
 	a.WaveformRam[soundIndex+1] = byte(value&0xF) * 0x11
-}
-
-// ToggleSoundChannel toggles a sound channel for debugging.
-func (a *APU) ToggleSoundChannel(channel int) {
-	switch channel {
-	case 1:
-		a.Channel1.DebugOff = !a.Channel1.DebugOff
-	case 2:
-		a.Channel2.DebugOff = !a.Channel2.DebugOff
-	case 3:
-		a.Channel3.DebugOff = !a.Channel3.DebugOff
-	case 4:
-		a.Channel4.DebugOff = !a.Channel4.DebugOff
-	}
-	log.Printf("Toggle Channel %v mute", channel)
 }
 
 // Start the 1st sound channel.
@@ -421,7 +394,10 @@ type Channel struct {
 	SweepIncrease bool
 
 	On bool
-	// Debug flag to turn off sound output
+	// TODO This is now gone from the emulator, so remove the DebugOff variable.
+	// But this will change the binary layout of our saves key frames. Increment
+	// the file version number and do not load key frames when file verison
+	// numbers change, rather re-generate them.
 	DebugOff bool
 }
 
@@ -432,9 +408,7 @@ func (chn *Channel) Sample(apu *APU) (output uint16) {
 	chn.Time += step
 	if chn.shouldPlay() && chn.On {
 		// Take the sample value from the generator
-		if !chn.DebugOff {
-			output = uint16(float64(chn.Generator.At(apu, chn.Time)) * chn.Amplitude)
-		}
+		output = uint16(float64(chn.Generator.At(apu, chn.Time)) * chn.Amplitude)
 		if chn.Duration > 0 {
 			chn.Duration--
 		}

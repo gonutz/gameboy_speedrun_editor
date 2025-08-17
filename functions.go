@@ -78,7 +78,7 @@ func (gb *Gameboy) instInc(set func(byte), org byte) {
 
 	gb.CPU.SetZ(total == 0)
 	gb.CPU.SetN(false)
-	gb.CPU.SetH(HalfCarryAdd(org, 1))
+	gb.CPU.SetH((org&0xF)+1 > 0xF)
 }
 
 // Perform an DEC operation on a value and store the result using the set function.

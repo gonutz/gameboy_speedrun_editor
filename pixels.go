@@ -129,20 +129,6 @@ var extraKeyMap = map[pixelgl.Button]func(*PixelsIOBinding){
 		fmt.Println(mon.Gameboy.BGMapString())
 	},
 
-	// Audio channel debugging
-	pixelgl.Key7: func(mon *PixelsIOBinding) {
-		mon.Gameboy.ToggleSoundChannel(1)
-	},
-	pixelgl.Key8: func(mon *PixelsIOBinding) {
-		mon.Gameboy.ToggleSoundChannel(2)
-	},
-	pixelgl.Key9: func(mon *PixelsIOBinding) {
-		mon.Gameboy.ToggleSoundChannel(3)
-	},
-	pixelgl.Key0: func(mon *PixelsIOBinding) {
-		mon.Gameboy.ToggleSoundChannel(4)
-	},
-
 	// Fullscreen toggle
 	pixelgl.KeyF: func(mon *PixelsIOBinding) {
 		mon.toggleFullscreen()

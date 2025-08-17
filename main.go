@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/image/font"
@@ -103,6 +104,14 @@ func runEditor() {
 	frameShiftCountdown := 0
 	movingFrameIndex := -1
 
+	var lastAction struct {
+		valid      bool
+		frameIndex int
+		button     Button
+		down       bool
+		count      int
+	}
+
 	infoText := ""
 	infoTextColor := color.RGBA{255, 255, 255, 255}
 
@@ -118,6 +127,12 @@ func runEditor() {
 
 	resetInfoText := func() {
 		infoText = ""
+	}
+
+	screenDirty := true
+
+	render := func() {
+		screenDirty = true
 	}
 
 	lastSessionPath := filepath.Join(os.Getenv("APPDATA"), "gameboy.speedrun")
@@ -273,6 +288,18 @@ func runEditor() {
 		gameboy.Update()
 	}
 
+	toggleFullscreen := func() {
+		if win.Monitor() == nil {
+			monitor := pixelgl.PrimaryMonitor()
+			_, height := monitor.Size()
+			win.SetMonitor(monitor)
+			PixelScale = height / 144
+		} else {
+			win.SetMonitor(nil)
+			PixelScale = 3
+		}
+	}
+
 	const (
 		charWidth   = 7
 		charHeight  = 13
@@ -285,13 +312,12 @@ func runEditor() {
 	for !win.Closed() {
 		toggleReplay := false
 
-		lastInfoText := infoText
-
 		if win.JustPressed(pixelgl.KeyEscape) {
 			if replayingGame {
 				toggleReplay = true
 			} else if infoText != "" {
 				resetInfoText()
+				render()
 			}
 		}
 
@@ -299,31 +325,22 @@ func runEditor() {
 			toggleReplay = true
 		}
 
-		lastReplayingGame := replayingGame
-
 		if toggleReplay {
 			replayingGame = !replayingGame
 
 			resetInfoText()
 
 			if replayingGame {
-				opts := GameboyOptions{
-					CGBMode: !*dmgMode,
-					Sound:   !*mute,
-				}
-
-				// TODO NewGameboy does not have sound, but the other way (which
-				// just inlines what NewGameboy actually does) will have sound.
-				// emulatorGameboy, err = NewGameboy(rom, opts)
-				emulatorGameboy = Gameboy{Options: opts}
-				emulatorGameboy.init(rom)
-
+				start := max(0, min(leftMostFrame/keyFrameInterval-1, len(keyFrameStates)-1))
+				emulatorGameboy = keyFrameStates[start]
+				emulatorGameboy.Sound.Init(!*mute)
+				replayFrameIndex = start*keyFrameInterval + 1
 				unmuteSound()
-
-				replayFrameIndex = 0
 			} else {
 				muteSound()
 			}
+
+			render()
 		}
 
 		if replayingGame {
@@ -363,9 +380,11 @@ func runEditor() {
 			frameCountX := canvasWidth / frameWidth
 			frameCountY := canvasHeight / frameHeight
 
-			lastLeftMostFrame := leftMostFrame
-
 			// Handle inputs.
+
+			if win.JustPressed(pixelgl.KeyF11) {
+				toggleFullscreen()
+			}
 
 			for i := range 10 {
 				if win.JustPressed(pixelgl.Key0+pixelgl.Button(i)) ||
@@ -380,12 +399,52 @@ func runEditor() {
 					// [1-9]. Zero can be typed only after other digits.
 					if i > 0 || infoText != "" {
 						setInfo(infoText + strconv.Itoa(i))
+						render()
 					}
 				}
 			}
 
 			repeatCount, _ := strconv.Atoi(infoText)
 			repeatCount = max(repeatCount, 1)
+
+			if lastAction.valid {
+				newRepeatCount := lastAction.count
+
+				plusDown := strings.ContainsRune(win.Typed(), '+')
+				if plusDown {
+					newRepeatCount += repeatCount
+				}
+
+				minusDown := strings.ContainsRune(win.Typed(), '-')
+				if minusDown {
+					newRepeatCount = max(0, newRepeatCount-repeatCount)
+				}
+
+				if newRepeatCount != lastAction.count {
+					start := lastAction.frameIndex
+					b := lastAction.button
+					down := lastAction.down
+
+					// First undo the last action.
+					for i := start; i < start+lastAction.count; i++ {
+						frameInputs[i][b] = !down
+					}
+
+					// Now apply the new action.
+					lastAction.count = newRepeatCount
+					for i := start; i < start+lastAction.count; i++ {
+						if i >= len(frameInputs) {
+							frameInputs = append(frameInputs, defaultInputs)
+						}
+						frameInputs[i][b] = down
+					}
+
+					resetInfoText()
+					render()
+				}
+			}
+
+			lastLeftMostFrame := leftMostFrame
 
 			frameShiftCountdown--
 			shiftFrames := func(key pixelgl.Button) bool {
@@ -402,16 +461,16 @@ func runEditor() {
 				leftMostFrame += repeatCount
 			}
 			if shiftFrames(pixelgl.KeyUp) {
-				leftMostFrame = max(0, leftMostFrame-10*repeatCount)
+				leftMostFrame = max(0, leftMostFrame-frameCountX*repeatCount)
 			}
 			if shiftFrames(pixelgl.KeyDown) {
-				leftMostFrame += 10 * repeatCount
+				leftMostFrame += frameCountX * repeatCount
 			}
 			if shiftFrames(pixelgl.KeyPageUp) {
-				leftMostFrame = max(0, leftMostFrame-100*repeatCount)
+				leftMostFrame = max(0, leftMostFrame-frameCountX*frameCountY*repeatCount)
 			}
 			if shiftFrames(pixelgl.KeyPageDown) {
-				leftMostFrame += 100 * repeatCount
+				leftMostFrame += frameCountX * frameCountY * repeatCount
 			}
 			scrollDelta := win.MouseScroll()
 			if scrollDelta.Y != 0 {
@@ -464,14 +523,10 @@ func runEditor() {
 			maxActiveFrameOffset := frameCountX*frameCountY - 1
 			activeFrameOffset = min(activeFrameOffset, maxActiveFrameOffset)
 
-			needToRender := leftMostFrame != lastLeftMostFrame ||
-				activeFrameOffset != lastActiveFrameOffset ||
-				replayingGame != lastReplayingGame ||
-				lastInfoText != infoText
-
 			if leftMostFrame != lastLeftMostFrame ||
 				activeFrameOffset != lastActiveFrameOffset {
 				resetInfoText()
+				render()
 			}
 
 			keyMap := map[pixelgl.Button]Button{
@@ -518,10 +573,16 @@ func runEditor() {
 						for i := range repeatCount {
 							frameInputs[frameIndex+i][b] = down
 						}
+
+						lastAction.valid = true
+						lastAction.frameIndex = frameIndex
+						lastAction.button = b
+						lastAction.down = down
+						lastAction.count = repeatCount
 					}
 
 					emulateFromIndex = frameIndex
-					needToRender = true
+					render()
 				}
 			}
 
@@ -532,7 +593,7 @@ func runEditor() {
 
 			if needToRecreatePixels {
 				pixels = make([]uint8, wantPixelLen)
-				needToRender = true
+				render()
 			}
 
 			emulateFrames := func(startFrame, endFrame int) []gameboyScreen {
@@ -583,7 +644,9 @@ func runEditor() {
 				return screenBuffer
 			}
 
-			if needToRender {
+			if screenDirty {
+				screenDirty = false
+
 				for i := range pixels {
 					pixels[i] = 0
 				}
@@ -597,8 +660,11 @@ func runEditor() {
 				textRenderer.Dst = img
 				textRenderer.Src = image.NewUniform(color.White)
 
-				activeFrameX := activeFrameOffset % frameCountX
-				activeFrameY := activeFrameOffset / frameCountX
+				activeFrameX, activeFrameY := 0, 0
+				if frameCountX > 0 {
+					activeFrameX = activeFrameOffset % frameCountX
+					activeFrameY = activeFrameOffset / frameCountX
+				}
 				activeFrameBounds := image.Rect(
 					activeFrameX*frameWidth,
 					activeFrameY*frameHeight,
@@ -683,10 +749,10 @@ func runEditor() {
 				}
 
 				pixels = invertY(pixels, canvasWidth, canvasHeight)
-			}
 
-			if len(pixels) > 0 {
-				canvas.SetPixels(pixels)
+				if len(pixels) > 0 {
+					canvas.SetPixels(pixels)
+				}
 			}
 
 			win.Update()

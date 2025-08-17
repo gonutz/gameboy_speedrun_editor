@@ -73,11 +73,6 @@ func (gb *Gameboy) Update() int {
 	return cycles
 }
 
-// ToggleSoundChannel toggles a sound channel for debugging.
-func (gb *Gameboy) ToggleSoundChannel(channel int) {
-	gb.Sound.ToggleSoundChannel(channel)
-}
-
 // BGMapString returns a string of the values in the background map.
 func (gb *Gameboy) BGMapString() string {
 	out := ""
