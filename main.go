@@ -275,8 +275,9 @@ func runEditor() {
 	loadLastSpeedrun()
 	defer saveCurrentSpeedrun()
 
+	const fontHeight = 13
 	const frameWidth = 1 + ScreenWidth + 1
-	const frameHeight = 13 + ScreenHeight + 1
+	const frameHeight = fontHeight + ScreenHeight + 1
 
 	updateGameboy := func(gameboy *Gameboy, frameIndex int) {
 		var inputs [buttonCount]bool
@@ -785,11 +786,35 @@ func runEditor() {
 							borderColor.R = 192
 						}
 
+						frameTop := image.Rect(
+							frameBounds.Min.X,
+							frameBounds.Min.Y,
+							frameBounds.Max.X,
+							frameBounds.Min.Y+fontHeight,
+						)
+						frameLeft := image.Rect(
+							frameBounds.Min.X,
+							frameTop.Max.Y,
+							frameBounds.Min.X+1,
+							frameBounds.Max.Y,
+						)
+						frameBottom := image.Rect(
+							frameBounds.Min.X+1,
+							frameTop.Max.Y,
+							frameBounds.Max.X-1,
+							frameBounds.Max.Y,
+						)
+						frameRight := image.Rect(
+							frameBounds.Max.X-1,
+							frameTop.Max.Y,
+							frameBounds.Max.X,
+							frameBounds.Max.Y,
+						)
 						border := image.NewUniform(borderColor)
-						// TODO Instead of filling all of the frame first, only
-						// fill the edges that are not overwritten by the
-						// Gameboy screen.
-						draw.Draw(img, frameBounds, border, image.Point{}, draw.Src)
+						draw.Draw(img, frameTop, border, image.Point{}, draw.Src)
+						draw.Draw(img, frameLeft, border, image.Point{}, draw.Src)
+						draw.Draw(img, frameBottom, border, image.Point{}, draw.Src)
+						draw.Draw(img, frameRight, border, image.Point{}, draw.Src)
 
 						// Render the Gameboy screen.
 						isActiveFrame :=
