@@ -65,7 +65,15 @@ func runEditor() {
 	// saved to and loaded from disk:
 
 	leftMostFrame := 0
-	activeFrameOffset := 0
+
+	var activeFrames struct {
+		start int
+		count int
+		// TODO Have this?
+		// forever bool
+		// Or have count be a special value?
+	}
+	activeFrames.count = 1
 
 	// frameInputs holds the state of all the Gameboy buttons for each frame.
 	var frameInputs [][buttonCount]bool
@@ -102,7 +110,13 @@ func runEditor() {
 	emulateFromIndex := 0
 
 	frameShiftCountdown := 0
-	movingFrameIndex := -1
+	draggingFrameIndex := -1
+
+	var lastLeftClick struct {
+		time time.Time
+		x    int
+		y    int
+	}
 
 	var lastAction struct {
 		valid      bool
@@ -204,7 +218,9 @@ func runEditor() {
 		}
 
 		leftMostFrame = leftMostFrameTemp
-		activeFrameOffset = activeFrameOffsetTemp
+		// TODO Load/save the selection, not just the very first selected frame.
+		activeFrames.start = leftMostFrameTemp + activeFrameOffsetTemp
+		activeFrames.count = 1
 		defaultInputs = defaultInputsTemp
 		frameInputs = frameInputsTemp
 		keyFrameStates = keyFrameStatesTemp
@@ -236,7 +252,8 @@ func runEditor() {
 		// Serialize the data.
 		n(sessionFileVersion)
 		n(leftMostFrame)
-		n(activeFrameOffset)
+		// TODO Load/save the selection, not just the very first selected frame.
+		n(activeFrames.start - leftMostFrame)
 		b(inputToBits(defaultInputs))
 		n(len(frameInputs))
 		for _, inputs := range frameInputs {
@@ -445,6 +462,7 @@ func runEditor() {
 			}
 
 			lastLeftMostFrame := leftMostFrame
+			lastActiveFrames := activeFrames
 
 			frameShiftCountdown--
 			shiftFrames := func(key pixelgl.Button) bool {
@@ -481,25 +499,49 @@ func runEditor() {
 				leftMostFrame = 0
 			}
 
-			// Update the active frame (potentially).
-			lastActiveFrameOffset := activeFrameOffset
-
 			if win.JustPressed(pixelgl.MouseButton1) {
 				mouse := win.MousePosition()
 				mouseX := int(mouse.X)
 				mouseY := canvasHeight - 1 - int(mouse.Y)
-				frameX := mouseX / frameWidth
-				frameY := mouseY / frameHeight
 
-				if 0 <= frameX && frameX < frameCountX &&
-					0 <= frameY && frameY < frameCountY {
-					activeFrameOffset = frameY*frameCountX + frameX
-					movingFrameIndex = leftMostFrame + activeFrameOffset
+				// Detect double-click.
+				// TODO Speed up rendering because double-clicks are not
+				// registerd sometimes due to rendering taking longer than the
+				// double-click threshold.
+				if time.Now().Sub(lastLeftClick.time).Seconds() < 0.300 &&
+					abs(lastLeftClick.x-mouseX) < 10 &&
+					abs(lastLeftClick.y-mouseY) < 10 {
+					// On double-click, select all frames left and right that
+					// have the same button states.
+					a, b := activeFrames.start, activeFrames.start
+					for a-1 >= 0 && frameInputs[a-1] == frameInputs[a] {
+						a--
+					}
+					for b+1 < len(frameInputs) && frameInputs[b+1] == frameInputs[b] {
+						b++
+					}
+					activeFrames.start = a
+					activeFrames.count = b - a + 1
+					render()
+				} else {
+					// On single-click, make the frame under the mouse active.
+					frameX := mouseX / frameWidth
+					frameY := mouseY / frameHeight
+
+					if 0 <= frameX && frameX < frameCountX &&
+						0 <= frameY && frameY < frameCountY {
+						activeFrames.count = 1
+						activeFrames.start = leftMostFrame + frameY*frameCountX + frameX
+					}
+
+					lastLeftClick.time = time.Now()
+					lastLeftClick.x = mouseX
+					lastLeftClick.y = mouseY
 				}
 			}
 
-			leftButtonDown := win.Pressed(pixelgl.MouseButton1)
-			if movingFrameIndex != -1 && leftButtonDown {
+			// Use the right mouse button for dragging the screen around.
+			if win.JustPressed(pixelgl.MouseButton2) {
 				mouse := win.MousePosition()
 				mouseX := int(mouse.X)
 				mouseY := canvasHeight - 1 - int(mouse.Y)
@@ -508,23 +550,31 @@ func runEditor() {
 
 				if 0 <= frameX && frameX < frameCountX &&
 					0 <= frameY && frameY < frameCountY {
-					newActiveFrameOffset := frameY*frameCountX + frameX
-					if activeFrameOffset != newActiveFrameOffset {
-						leftMostFrame += activeFrameOffset - newActiveFrameOffset
-						activeFrameOffset = newActiveFrameOffset
-					}
+					draggingFrameIndex = leftMostFrame + frameY*frameCountX + frameX
 				}
 			}
 
-			if !leftButtonDown {
-				movingFrameIndex = -1
+			rightButtonDown := win.Pressed(pixelgl.MouseButton2)
+			if draggingFrameIndex != -1 && rightButtonDown {
+				mouse := win.MousePosition()
+				mouseX := int(mouse.X)
+				mouseY := canvasHeight - 1 - int(mouse.Y)
+				frameX := mouseX / frameWidth
+				frameY := mouseY / frameHeight
+
+				if 0 <= frameX && frameX < frameCountX &&
+					0 <= frameY && frameY < frameCountY {
+					screenIndex := frameY*frameCountX + frameX
+					leftMostFrame = draggingFrameIndex - screenIndex
+				}
 			}
 
-			maxActiveFrameOffset := frameCountX*frameCountY - 1
-			activeFrameOffset = min(activeFrameOffset, maxActiveFrameOffset)
+			if !rightButtonDown {
+				draggingFrameIndex = -1
+			}
 
 			if leftMostFrame != lastLeftMostFrame ||
-				activeFrameOffset != lastActiveFrameOffset {
+				activeFrames != lastActiveFrames {
 				resetInfoText()
 				render()
 			}
@@ -546,42 +596,47 @@ func runEditor() {
 				if win.JustPressed(key) {
 					resetInfoText()
 
-					frameIndex := leftMostFrame + activeFrameOffset
-					down := !frameInputs[frameIndex][b]
+					firstFrameIndex := activeFrames.start
+					down := !frameInputs[firstFrameIndex][b]
 
-					if shiftDown {
+					if shiftDown && activeFrames.count == 1 {
 						// Toggle button for all the future if we do not
 						// overwrite any existing future button of this kind.
 						canToggle := true
-						for i := frameIndex + 2; i < len(frameInputs); i++ {
+						for i := firstFrameIndex + 2; i < len(frameInputs); i++ {
 							canToggle = canToggle && frameInputs[i][b] == frameInputs[i-1][b]
 						}
 
 						if canToggle {
-							for i := frameIndex; i < len(frameInputs); i++ {
+							for i := firstFrameIndex; i < len(frameInputs); i++ {
 								frameInputs[i][b] = down
 							}
 							defaultInputs[b] = down
 						} else {
 							setWarning("Cannot toggle button, it is already used in the future.")
 						}
-					} else {
+					} else if activeFrames.count == 1 {
 						// Toggle button for the active frame.
-						for frameIndex+repeatCount > len(frameInputs) {
+						for firstFrameIndex+repeatCount > len(frameInputs) {
 							frameInputs = append(frameInputs, defaultInputs)
 						}
 						for i := range repeatCount {
-							frameInputs[frameIndex+i][b] = down
+							frameInputs[firstFrameIndex+i][b] = down
 						}
 
 						lastAction.valid = true
-						lastAction.frameIndex = frameIndex
+						lastAction.frameIndex = firstFrameIndex
 						lastAction.button = b
 						lastAction.down = down
 						lastAction.count = repeatCount
+					} else if activeFrames.count >= 2 {
+						for i := range activeFrames.count {
+							frameInputs[firstFrameIndex+i][b] = down
+						}
+						lastAction.valid = false
 					}
 
-					emulateFromIndex = frameIndex
+					emulateFromIndex = firstFrameIndex
 					render()
 				}
 			}
@@ -737,7 +792,9 @@ func runEditor() {
 						draw.Draw(img, frameBounds, border, image.Point{}, draw.Src)
 
 						// Render the Gameboy screen.
-						isActiveFrame := frameIndex == leftMostFrame+activeFrameOffset
+						isActiveFrame :=
+							activeFrames.start <= frameIndex &&
+								frameIndex < activeFrames.start+activeFrames.count
 						screenIndex := frameIndex - leftMostFrame
 						screen := screens[screenIndex]
 						for y := range ScreenHeight {
@@ -968,6 +1025,13 @@ func startCPUProfiling() {
 	if err != nil {
 		log.Fatalf("Failed to start CPU profile: %v", err)
 	}
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 func check(err error) {
