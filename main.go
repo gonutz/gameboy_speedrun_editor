@@ -682,13 +682,50 @@ func runEditor() {
 
 						// Determine color by button state for this frame.
 						borderColor := color.RGBA{0, 0, 0, 255}
-						arrowKeyDown := inputs[ButtonLeft] || inputs[ButtonRight] || inputs[ButtonUp] || inputs[ButtonDown]
-						if arrowKeyDown {
-							borderColor.G = 128
+
+						// Create a 4 bit value for the directional keys: DURL
+						// (down up right left).
+						var directionalButtons byte
+						if inputs[ButtonLeft] {
+							directionalButtons += 1
 						}
+						if inputs[ButtonRight] {
+							directionalButtons += 2
+						}
+						if inputs[ButtonUp] {
+							directionalButtons += 4
+						}
+						if inputs[ButtonDown] {
+							directionalButtons += 8
+						}
+
+						// Valid combinations, which you could actually press on
+						// a real Gameboy, get a green tint between 100 and 200.
+						// Illegal combinations, like Left+Right, get 255 so
+						// they stand out as a very bright green.
+						borderColor.G = []byte{
+							0,   // durl
+							100, // durL
+							157, // duRl
+							255, // duRL
+							114, // dUrl
+							128, // dUrL
+							142, // dURl
+							255, // dURL
+							171, // Durl
+							200, // DurL
+							185, // DuRl
+							255, // DuRL
+							255, // DUrl
+							255, // DUrL
+							255, // DURl
+							255, // DURL
+						}[directionalButtons]
+
 						if inputs[ButtonA] || inputs[ButtonStart] || inputs[ButtonSelect] {
 							borderColor.B = 192
 						}
+
 						if inputs[ButtonB] {
 							borderColor.R = 192
 						}
