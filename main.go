@@ -85,6 +85,8 @@ func runEditor() {
 	// The following variables are volatile editor state that DOES NOT get saved
 	// to and loaded from disk.
 
+	selectionStartFrame := -1
+
 	// We can toggle between the editor which freezes time and shows multiple
 	// frames at once and running the emulator which replays the game in
 	// real-time using our edited inputs.
@@ -505,13 +507,27 @@ func runEditor() {
 				mouseX := int(mouse.X)
 				mouseY := canvasHeight - 1 - int(mouse.Y)
 
-				// Detect double-click.
-				// TODO Speed up rendering because double-clicks are not
-				// registerd sometimes due to rendering taking longer than the
-				// double-click threshold.
-				if time.Now().Sub(lastLeftClick.time).Seconds() < 0.300 &&
+				doubleClick := time.Now().Sub(lastLeftClick.time).Seconds() < 0.300 &&
 					abs(lastLeftClick.x-mouseX) < 10 &&
-					abs(lastLeftClick.y-mouseY) < 10 {
+					abs(lastLeftClick.y-mouseY) < 10
+				singleClick := !doubleClick
+
+				if singleClick {
+					// On single-click, make the frame under the mouse active.
+					frameX := mouseX / frameWidth
+					frameY := mouseY / frameHeight
+
+					if 0 <= frameX && frameX < frameCountX &&
+						0 <= frameY && frameY < frameCountY {
+						activeFrames.count = 1
+						activeFrames.start = leftMostFrame + frameY*frameCountX + frameX
+						selectionStartFrame = activeFrames.start
+					}
+
+					lastLeftClick.time = time.Now()
+					lastLeftClick.x = mouseX
+					lastLeftClick.y = mouseY
+				} else if doubleClick {
 					// On double-click, select all frames left and right that
 					// have the same button states.
 					a, b := activeFrames.start, activeFrames.start
@@ -523,22 +539,30 @@ func runEditor() {
 					}
 					activeFrames.start = a
 					activeFrames.count = b - a + 1
+					selectionStartFrame = -1
 					render()
-				} else {
-					// On single-click, make the frame under the mouse active.
-					frameX := mouseX / frameWidth
-					frameY := mouseY / frameHeight
-
-					if 0 <= frameX && frameX < frameCountX &&
-						0 <= frameY && frameY < frameCountY {
-						activeFrames.count = 1
-						activeFrames.start = leftMostFrame + frameY*frameCountX + frameX
-					}
-
-					lastLeftClick.time = time.Now()
-					lastLeftClick.x = mouseX
-					lastLeftClick.y = mouseY
 				}
+			}
+
+			leftMouseButtonDown := win.Pressed(pixelgl.MouseButton1)
+
+			if leftMouseButtonDown && selectionStartFrame != -1 {
+				mouse := win.MousePosition()
+				mouseX := int(mouse.X)
+				mouseY := canvasHeight - 1 - int(mouse.Y)
+				frameX := mouseX / frameWidth
+				frameY := mouseY / frameHeight
+				frameUnderMouse := leftMostFrame + frameY*frameCountX + frameX
+				a, b := selectionStartFrame, frameUnderMouse
+				if b < a {
+					a, b = b, a
+				}
+				activeFrames.start = a
+				activeFrames.count = b - a + 1
+			}
+
+			if !leftMouseButtonDown {
+				selectionStartFrame = -1
 			}
 
 			// Use the right mouse button for dragging the screen around.
@@ -555,8 +579,9 @@ func runEditor() {
 				}
 			}
 
-			rightButtonDown := win.Pressed(pixelgl.MouseButton2)
-			if draggingFrameIndex != -1 && rightButtonDown {
+			rightMouseButtonDown := win.Pressed(pixelgl.MouseButton2)
+
+			if draggingFrameIndex != -1 && rightMouseButtonDown {
 				mouse := win.MousePosition()
 				mouseX := int(mouse.X)
 				mouseY := canvasHeight - 1 - int(mouse.Y)
@@ -570,7 +595,7 @@ func runEditor() {
 				}
 			}
 
-			if !rightButtonDown {
+			if !rightMouseButtonDown {
 				draggingFrameIndex = -1
 			}
 
