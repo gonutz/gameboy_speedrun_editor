@@ -273,6 +273,13 @@ func (gb *Gameboy) setup() {
 
 	gb.SpritePalette = NewPalette()
 	gb.BGPalette = NewPalette()
+
+	for x := range gb.PreparedData {
+		for y := range gb.PreparedData[x] {
+			gb.PreparedData[x][y] = ColorPalette[3]
+			gb.ScreenData[x][y] = ColorPalette[3]
+		}
+	}
 }
 
 type GameboyOptions struct {

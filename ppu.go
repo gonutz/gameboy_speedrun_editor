@@ -400,17 +400,13 @@ func (gb *Gameboy) setPixel(x byte, y byte, r uint8, g uint8, b uint8, priority 
 
 // Clear the screen by setting every pixel to white.
 func (gb *Gameboy) clearScreen() {
-	// Check if we have cleared the screen already
 	if gb.ScreenCleared {
 		return
 	}
 
-	// Set every pixel to white
-	for x := 0; x < len(gb.ScreenData); x++ {
-		for y := 0; y < len(gb.ScreenData[x]); y++ {
-			gb.ScreenData[x][y][0] = 255
-			gb.ScreenData[x][y][1] = 255
-			gb.ScreenData[x][y][2] = 255
+	for x := range gb.ScreenData {
+		for y := range gb.ScreenData[x] {
+			gb.ScreenData[x][y] = ColorPalette[3]
 		}
 	}
 
