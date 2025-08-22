@@ -66,18 +66,11 @@ func runEditor() {
 
 	leftMostFrame := 0
 
-	var activeFrames struct {
-		start int
-		count int
-		// TODO Have this?
-		// forever bool
-		// Or have count be a special value?
-	}
-	activeFrames.count = 1
+	var activeSelection frameSelection
 
 	// frameInputs holds the state of all the Gameboy buttons for each frame.
-	var frameInputs [][buttonCount]bool
-	var defaultInputs [buttonCount]bool
+	var frameInputs []inputState
+	var defaultInputs inputState
 
 	const keyFrameInterval = 100
 	var keyFrameStates []Gameboy
@@ -85,7 +78,16 @@ func runEditor() {
 	// The following variables are volatile editor state that DOES NOT get saved
 	// to and loaded from disk.
 
-	selectionStartFrame := -1
+	dragStartFrame := -1
+	var dragStartSelection frameSelection
+	var dragStartInputs []inputState
+	var stateBeforeDrag struct {
+		start  int
+		frames []inputState
+	}
+
+	doubleClickPending := false
+	pendingDoubleClickFrame := -1
 
 	// We can toggle between the editor which freezes time and shows multiple
 	// frames at once and running the emulator which replays the game in
@@ -111,7 +113,7 @@ func runEditor() {
 	// need to be emulated again.
 	emulateFromIndex := 0
 
-	frameShiftCountdown := 0
+	keyRepeatCountdown := 0
 	draggingFrameIndex := -1
 
 	var lastLeftClick struct {
@@ -199,9 +201,10 @@ func runEditor() {
 			return
 		}
 		leftMostFrameTemp := n()
-		activeFrameOffsetTemp := n()
+		activeSelectionFirstTemp := n()
+		activeSelectionLastTemp := n()
 		defaultInputsTemp := bitsToInput(b())
-		frameInputsTemp := make([][buttonCount]bool, n())
+		frameInputsTemp := make([]inputState, n())
 		for i := range frameInputsTemp {
 			frameInputsTemp[i] = bitsToInput(b())
 		}
@@ -220,9 +223,8 @@ func runEditor() {
 		}
 
 		leftMostFrame = leftMostFrameTemp
-		// TODO Load/save the selection, not just the very first selected frame.
-		activeFrames.start = leftMostFrameTemp + activeFrameOffsetTemp
-		activeFrames.count = 1
+		activeSelection.first = activeSelectionFirstTemp
+		activeSelection.last = activeSelectionLastTemp
 		defaultInputs = defaultInputsTemp
 		frameInputs = frameInputsTemp
 		keyFrameStates = keyFrameStatesTemp
@@ -254,8 +256,8 @@ func runEditor() {
 		// Serialize the data.
 		n(sessionFileVersion)
 		n(leftMostFrame)
-		// TODO Load/save the selection, not just the very first selected frame.
-		n(activeFrames.start - leftMostFrame)
+		n(activeSelection.first)
+		n(activeSelection.last)
 		b(inputToBits(defaultInputs))
 		n(len(frameInputs))
 		for _, inputs := range frameInputs {
@@ -282,7 +284,7 @@ func runEditor() {
 	const frameHeight = fontHeight + ScreenHeight + 1
 
 	updateGameboy := func(gameboy *Gameboy, frameIndex int) {
-		var inputs [buttonCount]bool
+		var inputs inputState
 
 		if replayingGame {
 			if frameIndex < len(frameInputs) {
@@ -339,6 +341,10 @@ func runEditor() {
 				resetInfoText()
 				render()
 			}
+		}
+
+		if win.JustPressed(pixelgl.KeyF11) || win.JustPressed(pixelgl.KeyF) {
+			toggleFullscreen()
 		}
 
 		if win.JustPressed(pixelgl.KeySpace) {
@@ -402,9 +408,8 @@ func runEditor() {
 
 			// Handle inputs.
 
-			if win.JustPressed(pixelgl.KeyF11) {
-				toggleFullscreen()
-			}
+			shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
+			controlDown := win.Pressed(pixelgl.KeyLeftControl) || win.Pressed(pixelgl.KeyRightControl)
 
 			for i := range 10 {
 				if win.JustPressed(pixelgl.Key0+pixelgl.Button(i)) ||
@@ -424,7 +429,8 @@ func runEditor() {
 				}
 			}
 
-			repeatCount, _ := strconv.Atoi(infoText)
+			repeatCount, err := strconv.Atoi(infoText)
+			repeatCountValid := err == nil
 			repeatCount = max(repeatCount, 1)
 
 			if lastAction.valid {
@@ -465,104 +471,209 @@ func runEditor() {
 			}
 
 			lastLeftMostFrame := leftMostFrame
-			lastActiveFrames := activeFrames
+			lastActiveFrames := activeSelection
 
-			frameShiftCountdown--
-			shiftFrames := func(key pixelgl.Button) bool {
-				if win.JustPressed(key) || win.Pressed(key) && frameShiftCountdown <= 0 {
-					frameShiftCountdown = 8
+			frameDelta := 0
+			keyRepeatCountdown--
+			keyTriggered := func(key pixelgl.Button) bool {
+				if win.JustPressed(key) || win.Pressed(key) && keyRepeatCountdown <= 0 {
+					keyRepeatCountdown = 8
 					return true
 				}
 				return false
 			}
-			if shiftFrames(pixelgl.KeyLeft) {
-				leftMostFrame = max(0, leftMostFrame-repeatCount)
+			if keyTriggered(pixelgl.KeyLeft) {
+				frameDelta = -repeatCount
 			}
-			if shiftFrames(pixelgl.KeyRight) {
-				leftMostFrame += repeatCount
+			if keyTriggered(pixelgl.KeyRight) {
+				frameDelta = repeatCount
 			}
-			if shiftFrames(pixelgl.KeyUp) {
-				leftMostFrame = max(0, leftMostFrame-frameCountX*repeatCount)
+			if keyTriggered(pixelgl.KeyUp) {
+				frameDelta = -frameCountX * repeatCount
 			}
-			if shiftFrames(pixelgl.KeyDown) {
-				leftMostFrame += frameCountX * repeatCount
+			if keyTriggered(pixelgl.KeyDown) {
+				frameDelta = frameCountX * repeatCount
 			}
-			if shiftFrames(pixelgl.KeyPageUp) {
-				leftMostFrame = max(0, leftMostFrame-frameCountX*frameCountY*repeatCount)
+			if keyTriggered(pixelgl.KeyPageUp) {
+				frameDelta = -frameCountX * frameCountY * repeatCount
 			}
-			if shiftFrames(pixelgl.KeyPageDown) {
-				leftMostFrame += frameCountX * frameCountY * repeatCount
+			if keyTriggered(pixelgl.KeyPageDown) {
+				frameDelta = frameCountX * frameCountY * repeatCount
 			}
+
 			scrollDelta := win.MouseScroll()
 			if scrollDelta.Y != 0 {
-				leftMostFrame = max(0, leftMostFrame-int(scrollDelta.Y))
+				ticks := -int(scrollDelta.Y)
+				frameDelta = ticks * frameCountX
+				if shiftDown {
+					frameDelta = ticks
+				} else if controlDown {
+					frameDelta = ticks * frameCountX * frameCountY
+				}
+			}
+
+			if repeatCountValid &&
+				(win.JustPressed(pixelgl.KeyG) ||
+					win.JustPressed(pixelgl.KeyEnter) ||
+					win.JustPressed(pixelgl.KeyKPEnter)) {
+				frameDelta = -leftMostFrame + repeatCount
+				resetInfoText()
+				render()
+			}
+
+			if frameDelta != 0 {
+				if shiftDown && scrollDelta.Y == 0 {
+					activeSelection.last = max(0, activeSelection.last+frameDelta)
+
+					if activeSelection.last < leftMostFrame {
+						leftMostFrame += frameDelta
+					}
+					if activeSelection.last >= leftMostFrame+frameCountX*frameCountY {
+						leftMostFrame += frameDelta
+					}
+				} else if controlDown && scrollDelta.Y == 0 {
+					// TODO Move the frames.
+				} else {
+					leftMostFrame = max(0, leftMostFrame+frameDelta)
+				}
 			}
 
 			if win.JustPressed(pixelgl.KeyHome) {
 				leftMostFrame = 0
 			}
+			if win.JustPressed(pixelgl.KeyEnd) {
+				if shiftDown {
+					activeSelection.last = len(frameInputs) - 1
+				} else {
+					leftMostFrame = len(frameInputs) - frameCountX*frameCountY - 1
+				}
+			}
+
+			mouse := win.MousePosition()
+			mouseX := int(mouse.X)
+			mouseY := canvasHeight - 1 - int(mouse.Y)
+
+			frameX := mouseX / frameWidth
+			frameY := mouseY / frameHeight
+			frameUnderMouse := -1
+			if 0 <= frameX && frameX < frameCountX &&
+				0 <= frameY && frameY < frameCountY {
+				frameUnderMouse = leftMostFrame + frameY*frameCountX + frameX
+			}
 
 			if win.JustPressed(pixelgl.MouseButton1) {
-				mouse := win.MousePosition()
-				mouseX := int(mouse.X)
-				mouseY := canvasHeight - 1 - int(mouse.Y)
-
-				doubleClick := time.Now().Sub(lastLeftClick.time).Seconds() < 0.300 &&
+				doubleClickPending = time.Now().Sub(lastLeftClick.time).Seconds() < 0.300 &&
 					abs(lastLeftClick.x-mouseX) < 10 &&
 					abs(lastLeftClick.y-mouseY) < 10
-				singleClick := !doubleClick
+				if doubleClickPending {
+					pendingDoubleClickFrame = frameUnderMouse
+				}
+				singleClick := !doubleClickPending
 
 				if singleClick {
-					// On single-click, make the frame under the mouse active.
-					frameX := mouseX / frameWidth
-					frameY := mouseY / frameHeight
+					if frameUnderMouse != -1 {
+						if shiftDown {
+							activeSelection.last = frameUnderMouse
+						} else if controlDown {
+							dragStartFrame = frameUnderMouse
+							dragStartSelection = activeSelection
+							toCopy := frameInputs[activeSelection.start():activeSelection.end()]
+							dragStartInputs = append(dragStartInputs[:0], toCopy...)
+							stateBeforeDrag.frames = append(stateBeforeDrag.frames[:0], toCopy...)
+							stateBeforeDrag.start = activeSelection.start()
+						} else {
+							// On single-click, make the frame under the mouse active.
+							activeSelection.first = frameUnderMouse
+							activeSelection.last = frameUnderMouse
 
-					if 0 <= frameX && frameX < frameCountX &&
-						0 <= frameY && frameY < frameCountY {
-						activeFrames.count = 1
-						activeFrames.start = leftMostFrame + frameY*frameCountX + frameX
-						selectionStartFrame = activeFrames.start
+							lastLeftClick.time = time.Now()
+							lastLeftClick.x = mouseX
+							lastLeftClick.y = mouseY
+						}
 					}
+				}
+			}
 
-					lastLeftClick.time = time.Now()
-					lastLeftClick.x = mouseX
-					lastLeftClick.y = mouseY
-				} else if doubleClick {
+			leftMouseButtonDown := win.Pressed(pixelgl.MouseButton1)
+
+			if leftMouseButtonDown && frameUnderMouse != -1 {
+				activeSelection.last = frameUnderMouse
+			}
+
+			if !leftMouseButtonDown && doubleClickPending {
+				doubleClickPending = false
+
+				if frameUnderMouse != -1 && frameUnderMouse == pendingDoubleClickFrame {
 					// On double-click, select all frames left and right that
 					// have the same button states.
-					a, b := activeFrames.start, activeFrames.start
+					a, b := frameUnderMouse, frameUnderMouse
 					for a-1 >= 0 && frameInputs[a-1] == frameInputs[a] {
 						a--
 					}
 					for b+1 < len(frameInputs) && frameInputs[b+1] == frameInputs[b] {
 						b++
 					}
-					activeFrames.start = a
-					activeFrames.count = b - a + 1
-					selectionStartFrame = -1
+					activeSelection.first = a
+					activeSelection.last = b
 					render()
 				}
 			}
 
-			leftMouseButtonDown := win.Pressed(pixelgl.MouseButton1)
+			if leftMouseButtonDown && dragStartFrame != -1 && frameUnderMouse != -1 {
+				selectionOffset := frameUnderMouse - dragStartFrame
+				activeSelection = dragStartSelection
+				activeSelection.first = max(0, activeSelection.first+selectionOffset)
+				activeSelection.last = max(0, activeSelection.last+selectionOffset)
 
-			if leftMouseButtonDown && selectionStartFrame != -1 {
-				mouse := win.MousePosition()
-				mouseX := int(mouse.X)
-				mouseY := canvasHeight - 1 - int(mouse.Y)
-				frameX := mouseX / frameWidth
-				frameY := mouseY / frameHeight
-				frameUnderMouse := leftMostFrame + frameY*frameCountX + frameX
-				a, b := selectionStartFrame, frameUnderMouse
-				if b < a {
-					a, b = b, a
+				if activeSelection != lastActiveFrames {
+					// Reset the input state to before the start of the drag.
+					for i := range stateBeforeDrag.frames {
+						frameInputs[stateBeforeDrag.start+i] = stateBeforeDrag.frames[i]
+					}
+
+					changeStart := min(dragStartSelection.start(), activeSelection.start())
+					changeEnd := max(dragStartSelection.end(), activeSelection.end())
+
+					for changeEnd >= len(frameInputs) {
+						frameInputs = append(frameInputs, defaultInputs)
+					}
+
+					stateBeforeDrag.start = changeStart
+					stateBeforeDrag.frames = append(stateBeforeDrag.frames[:0], frameInputs[changeStart:changeEnd+1]...)
+
+					fillLeft := inputState{}
+					if dragStartSelection.start() >= 1 {
+						fillLeft = frameInputs[dragStartSelection.start()-1]
+					}
+
+					fillRight := defaultInputs
+					end := dragStartSelection.end()
+					if end < len(frameInputs) {
+						fillRight = frameInputs[end]
+					}
+
+					for i := dragStartSelection.start(); i < activeSelection.start(); i++ {
+						frameInputs[i] = fillLeft
+					}
+
+					for i := activeSelection.end(); i < dragStartSelection.end(); i++ {
+						frameInputs[i] = fillRight
+					}
+
+					for i := len(dragStartInputs) - 1; i >= 0; i-- {
+						j := dragStartSelection.end() - 1 - i + selectionOffset
+						if j >= 0 {
+							frameInputs[j] = dragStartInputs[i]
+						}
+					}
+
+					emulateFromIndex = min(dragStartSelection.start(), activeSelection.start())
+					render()
 				}
-				activeFrames.start = a
-				activeFrames.count = b - a + 1
 			}
 
 			if !leftMouseButtonDown {
-				selectionStartFrame = -1
+				dragStartFrame = -1
 			}
 
 			// Use the right mouse button for dragging the screen around.
@@ -600,7 +711,7 @@ func runEditor() {
 			}
 
 			if leftMostFrame != lastLeftMostFrame ||
-				activeFrames != lastActiveFrames {
+				activeSelection != lastActiveFrames {
 				resetInfoText()
 				render()
 			}
@@ -616,16 +727,14 @@ func runEditor() {
 				pixelgl.KeyE: ButtonSelect,
 			}
 
-			shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
-
 			for key, b := range keyMap {
 				if win.JustPressed(key) {
 					resetInfoText()
 
-					firstFrameIndex := activeFrames.start
+					firstFrameIndex := activeSelection.start()
 					down := !frameInputs[firstFrameIndex][b]
 
-					if shiftDown && activeFrames.count == 1 {
+					if shiftDown && activeSelection.first == activeSelection.last {
 						// Toggle button for all the future if we do not
 						// overwrite any existing future button of this kind.
 						canToggle := true
@@ -641,23 +750,24 @@ func runEditor() {
 						} else {
 							setWarning("Cannot toggle button, it is already used in the future.")
 						}
-					} else if activeFrames.count == 1 {
+					} else if activeSelection.first == activeSelection.last {
 						// Toggle button for the active frame.
-						for firstFrameIndex+repeatCount > len(frameInputs) {
+						for activeSelection.first+repeatCount > len(frameInputs) {
 							frameInputs = append(frameInputs, defaultInputs)
 						}
 						for i := range repeatCount {
-							frameInputs[firstFrameIndex+i][b] = down
+							frameInputs[activeSelection.first+i][b] = down
 						}
 
 						lastAction.valid = true
-						lastAction.frameIndex = firstFrameIndex
+						lastAction.frameIndex = activeSelection.first
 						lastAction.button = b
 						lastAction.down = down
 						lastAction.count = repeatCount
-					} else if activeFrames.count >= 2 {
-						for i := range activeFrames.count {
-							frameInputs[firstFrameIndex+i][b] = down
+					} else {
+						// We have multiple frames selected.
+						for i := activeSelection.start(); i < activeSelection.end(); i++ {
+							frameInputs[i][b] = down
 						}
 						lastAction.valid = false
 					}
@@ -710,6 +820,12 @@ func runEditor() {
 
 				gb := keyFrameStates[keyFrameIndex]
 
+				// TODO Think about exactly (especially considering the frame
+				// selection) the generation of key frames and input states
+				// expands. This code will generate one more frame input than
+				// frames visible on the screen. When we move a selection past
+				// the last frame, we use >= instead of > which was a hack to
+				// work around this extra frame.
 				currentFrame := keyFrameIndex * keyFrameInterval
 				for currentFrame < startFrame {
 					currentFrame++
@@ -842,9 +958,7 @@ func runEditor() {
 						draw.Draw(img, frameRight, border, image.Point{}, draw.Src)
 
 						// Render the Gameboy screen.
-						isActiveFrame :=
-							activeFrames.start <= frameIndex &&
-								frameIndex < activeFrames.start+activeFrames.count
+						isActiveFrame := activeSelection.start() <= frameIndex && frameIndex < activeSelection.end()
 						screenIndex := frameIndex - leftMostFrame
 						screen := screens[screenIndex]
 						for y := range ScreenHeight {
@@ -941,15 +1055,18 @@ func invertY(pixels []uint8, w, h int) []uint8 {
 	return pixels
 }
 
-func bitsToInput(bits byte) [buttonCount]bool {
-	var b [buttonCount]bool
+// TODO Use a byte per input.
+type inputState [buttonCount]bool
+
+func bitsToInput(bits byte) inputState {
+	var b inputState
 	for i := range buttonCount {
 		b[i] = bits&(1<<i) != 0
 	}
 	return b
 }
 
-func inputToBits(inputs [buttonCount]bool) byte {
+func inputToBits(inputs inputState) byte {
 	var b byte
 	for i := range buttonCount {
 		if inputs[i] {
@@ -1028,6 +1145,27 @@ func startGBLoop(gameboy *Gameboy, monitor IOBinding) {
 			frames = 0
 		}
 	}
+}
+
+// frameSelection has the first and last selected frame indices where first was
+// selected before (in time) last. They can be in any order. If first == last
+// then a single frame is selected. If first < last the selection was done
+// forward in time, if first > last the selection was done backward in time.
+type frameSelection struct {
+	first int
+	last  int
+
+	// TODO Have this?
+	// forever bool
+	// Or have count be a special value?
+}
+
+func (s *frameSelection) start() int {
+	return min(s.first, s.last)
+}
+
+func (s *frameSelection) end() int {
+	return max(s.first, s.last) + 1
 }
 
 // IOBinding provides an interface for display and input bindings.
