@@ -539,14 +539,18 @@ func runEditor() {
 			}
 
 			if win.JustPressed(pixelgl.KeyHome) {
+				if shiftDown {
+					activeSelection.last = 0
+				}
+
 				leftMostFrame = 0
 			}
 			if win.JustPressed(pixelgl.KeyEnd) {
 				if shiftDown {
 					activeSelection.last = len(frameInputs) - 1
-				} else {
-					leftMostFrame = len(frameInputs) - frameCountX*frameCountY - 1
 				}
+
+				leftMostFrame = len(frameInputs) - frameCountX*frameCountY - 1
 			}
 
 			mouse := win.MousePosition()
