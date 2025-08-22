@@ -203,10 +203,10 @@ func runEditor() {
 		leftMostFrameTemp := n()
 		activeSelectionFirstTemp := n()
 		activeSelectionLastTemp := n()
-		defaultInputsTemp := bitsToInput(b())
+		defaultInputsTemp := inputState(b())
 		frameInputsTemp := make([]inputState, n())
 		for i := range frameInputsTemp {
-			frameInputsTemp[i] = bitsToInput(b())
+			frameInputsTemp[i] = inputState(b())
 		}
 		if keyFrameInterval != n() {
 			// We currently do not support different key frame intervals.
@@ -258,10 +258,10 @@ func runEditor() {
 		n(leftMostFrame)
 		n(activeSelection.first)
 		n(activeSelection.last)
-		b(inputToBits(defaultInputs))
+		b(byte(defaultInputs))
 		n(len(frameInputs))
 		for _, inputs := range frameInputs {
-			b(inputToBits(inputs))
+			b(byte(inputs))
 		}
 		n(keyFrameInterval)
 		n(len(keyFrameStates))
@@ -300,7 +300,7 @@ func runEditor() {
 			inputs = frameInputs[frameIndex]
 		}
 		for b := range buttonCount {
-			if inputs[b] {
+			if isButtonDown(inputs, b) {
 				gameboy.PressButton(b)
 			} else {
 				gameboy.ReleaseButton(b)
@@ -453,7 +453,7 @@ func runEditor() {
 
 					// First undo the last action.
 					for i := start; i < start+lastAction.count; i++ {
-						frameInputs[i][b] = !down
+						setButtonDown(&frameInputs[i], b, !down)
 					}
 
 					// Now apply the new action.
@@ -462,7 +462,7 @@ func runEditor() {
 						if i >= len(frameInputs) {
 							frameInputs = append(frameInputs, defaultInputs)
 						}
-						frameInputs[i][b] = down
+						setButtonDown(&frameInputs[i], b, down)
 					}
 
 					resetInfoText()
@@ -645,7 +645,7 @@ func runEditor() {
 					stateBeforeDrag.start = changeStart
 					stateBeforeDrag.frames = append(stateBeforeDrag.frames[:0], frameInputs[changeStart:changeEnd+1]...)
 
-					fillLeft := inputState{}
+					var fillLeft inputState
 					if dragStartSelection.start() >= 1 {
 						fillLeft = frameInputs[dragStartSelection.start()-1]
 					}
@@ -736,21 +736,22 @@ func runEditor() {
 					resetInfoText()
 
 					firstFrameIndex := activeSelection.start()
-					down := !frameInputs[firstFrameIndex][b]
+					down := !isButtonDown(frameInputs[firstFrameIndex], b)
 
 					if shiftDown && activeSelection.first == activeSelection.last {
 						// Toggle button for all the future if we do not
 						// overwrite any existing future button of this kind.
 						canToggle := true
 						for i := firstFrameIndex + 2; i < len(frameInputs); i++ {
-							canToggle = canToggle && frameInputs[i][b] == frameInputs[i-1][b]
+							canToggle = canToggle &&
+								isButtonDown(frameInputs[i], b) == isButtonDown(frameInputs[i-1], b)
 						}
 
 						if canToggle {
 							for i := firstFrameIndex; i < len(frameInputs); i++ {
-								frameInputs[i][b] = down
+								setButtonDown(&frameInputs[i], b, down)
 							}
-							defaultInputs[b] = down
+							setButtonDown(&defaultInputs, b, down)
 						} else {
 							setWarning("Cannot toggle button, it is already used in the future.")
 						}
@@ -760,7 +761,7 @@ func runEditor() {
 							frameInputs = append(frameInputs, defaultInputs)
 						}
 						for i := range repeatCount {
-							frameInputs[activeSelection.first+i][b] = down
+							setButtonDown(&frameInputs[activeSelection.first+i], b, down)
 						}
 
 						lastAction.valid = true
@@ -771,7 +772,7 @@ func runEditor() {
 					} else {
 						// We have multiple frames selected.
 						for i := activeSelection.start(); i < activeSelection.end(); i++ {
-							frameInputs[i][b] = down
+							setButtonDown(&frameInputs[i], b, down)
 						}
 						lastAction.valid = false
 					}
@@ -887,16 +888,16 @@ func runEditor() {
 						// Create a 4 bit value for the directional keys: DURL
 						// (down up right left).
 						var directionalButtons byte
-						if inputs[ButtonLeft] {
+						if isButtonDown(inputs, ButtonLeft) {
 							directionalButtons += 1
 						}
-						if inputs[ButtonRight] {
+						if isButtonDown(inputs, ButtonRight) {
 							directionalButtons += 2
 						}
-						if inputs[ButtonUp] {
+						if isButtonDown(inputs, ButtonUp) {
 							directionalButtons += 4
 						}
-						if inputs[ButtonDown] {
+						if isButtonDown(inputs, ButtonDown) {
 							directionalButtons += 8
 						}
 
@@ -923,11 +924,13 @@ func runEditor() {
 							255, // DURL
 						}[directionalButtons]
 
-						if inputs[ButtonA] || inputs[ButtonStart] || inputs[ButtonSelect] {
+						if isButtonDown(inputs, ButtonA) ||
+							isButtonDown(inputs, ButtonStart) ||
+							isButtonDown(inputs, ButtonSelect) {
 							borderColor.B = 192
 						}
 
-						if inputs[ButtonB] {
+						if isButtonDown(inputs, ButtonB) {
 							borderColor.R = 192
 						}
 
@@ -984,7 +987,7 @@ func runEditor() {
 						// Render the text above the frame.
 						text := strconv.Itoa(frameIndex)
 						add := func(b Button, pressed string) {
-							if inputs[b] {
+							if isButtonDown(inputs, b) {
 								text += " " + pressed
 							}
 						}
@@ -1059,26 +1062,20 @@ func invertY(pixels []uint8, w, h int) []uint8 {
 	return pixels
 }
 
-// TODO Use a byte per input.
-type inputState [buttonCount]bool
+type inputState byte
 
-func bitsToInput(bits byte) inputState {
-	var b inputState
-	for i := range buttonCount {
-		b[i] = bits&(1<<i) != 0
-	}
-	return b
+func isButtonDown(s inputState, b Button) bool {
+	return s&(1<<b) != 0
 }
 
-func inputToBits(inputs inputState) byte {
-	var b byte
-	for i := range buttonCount {
-		if inputs[i] {
-			b += 1 << i
-		}
+func setButtonDown(s *inputState, b Button, down bool) {
+	if down {
+		*s |= 1 << b
+	} else {
+		*s &= ^(1 << b)
 	}
-	return b
 }
+
 func saveScreenshot(gameboy *Gameboy, path string) {
 	f, err := os.Create(path)
 	check(err)
