@@ -53,12 +53,14 @@ type Gameboy struct {
 	PrepareSpeed bool
 
 	ThisCpuTicks int32
+
+	ExtraCycles int32
 }
 
 // Update update the state of the gameboy by a single frame.
 func (gb *Gameboy) Update() int {
-	cycles := 0
-	for cycles < CyclesPerFrame*gb.getSpeed() {
+	cycles := int(gb.ExtraCycles)
+	for cycles < CyclesPerFrame {
 		cyclesOp := 4
 		if !gb.Halted {
 			cyclesOp = gb.ExecuteNextOpcode()
@@ -70,6 +72,7 @@ func (gb *Gameboy) Update() int {
 		gb.updateTimers(cyclesOp)
 		cycles += gb.doInterrupts()
 	}
+	gb.ExtraCycles = int32(cycles - CyclesPerFrame)
 	return cycles
 }
 
