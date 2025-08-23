@@ -798,7 +798,11 @@ func runEditor() {
 						for i := activeSelection.start(); i < activeSelection.end(); i++ {
 							setButtonDown(&frameInputs[i], b, down)
 						}
-						lastAction.valid = false
+						lastAction.valid = true
+						lastAction.frameIndex = activeSelection.start()
+						lastAction.button = b
+						lastAction.down = down
+						lastAction.count = activeSelection.end() - activeSelection.start()
 					}
 
 					emulateFromIndex = firstFrameIndex
