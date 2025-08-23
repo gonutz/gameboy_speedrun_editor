@@ -505,35 +505,49 @@ func runEditor() {
 			repeatCount = max(repeatCount, 1)
 
 			if lastAction.valid {
-				newRepeatCount := lastAction.count
+				newAction := lastAction
 
-				plusDown := strings.ContainsRune(win.Typed(), '+')
-				if plusDown {
-					newRepeatCount += repeatCount
+				if strings.ContainsAny(win.Typed(), "+p") {
+					// Append input to the end.
+					newAction.count += repeatCount
 				}
 
-				minusDown := strings.ContainsRune(win.Typed(), '-')
-				if minusDown {
-					newRepeatCount = max(0, newRepeatCount-repeatCount)
+				if strings.Contains(win.Typed(), "P") {
+					// Prepend input to the start.
+					newAction.count += repeatCount
+					newAction.frameIndex -= repeatCount
 				}
 
-				if newRepeatCount != lastAction.count {
-					start := lastAction.frameIndex
+				if strings.ContainsAny(win.Typed(), "-m") {
+					// Remove inputs from the end.
+					newAction.count = max(0, newAction.count-repeatCount)
+				}
+
+				if strings.Contains(win.Typed(), "M") {
+					delta := min(repeatCount, lastAction.count)
+					newAction.frameIndex += delta
+					newAction.count -= delta
+				}
+
+				if newAction != lastAction {
+					// start := lastAction.frameIndex
 					b := lastAction.button
 					down := lastAction.down
 
 					// First undo the last action.
-					for i := start; i < start+lastAction.count; i++ {
-						setButtonDown(&frameInputs[i], b, !down)
+					for i := range lastAction.count {
+						j := lastAction.frameIndex + i
+						setButtonDown(&frameInputs[j], b, !down)
 					}
 
 					// Now apply the new action.
-					lastAction.count = newRepeatCount
-					for i := start; i < start+lastAction.count; i++ {
-						if i >= len(frameInputs) {
+					lastAction = newAction
+					for i := range lastAction.count {
+						j := lastAction.frameIndex + i
+						if j >= len(frameInputs) {
 							frameInputs = append(frameInputs, defaultInputs)
 						}
-						setButtonDown(&frameInputs[i], b, down)
+						setButtonDown(&frameInputs[j], b, down)
 					}
 
 					resetInfoText()
