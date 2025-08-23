@@ -530,11 +530,11 @@ func runEditor() {
 
 				if strings.ContainsAny(win.Typed(), "-m") {
 					// Remove inputs from the end.
-					newAction.count = max(0, newAction.count-repeatCount)
+					newAction.count = max(1, newAction.count-repeatCount)
 				}
 
 				if strings.Contains(win.Typed(), "M") {
-					delta := min(repeatCount, lastAction.count)
+					delta := min(repeatCount, lastAction.count-1)
 					newAction.frameIndex += delta
 					newAction.count -= delta
 				}
@@ -559,6 +559,9 @@ func runEditor() {
 						}
 						setButtonDown(&frameInputs[j], b, down)
 					}
+
+					activeSelection.first = lastAction.frameIndex
+					activeSelection.last = lastAction.frameIndex + lastAction.count - 1
 
 					resetInfoText()
 					render()
@@ -817,6 +820,9 @@ func runEditor() {
 						lastAction.button = b
 						lastAction.down = down
 						lastAction.count = repeatCount
+
+						activeSelection.first = lastAction.frameIndex
+						activeSelection.last = lastAction.frameIndex + lastAction.count - 1
 					} else {
 						// We have multiple frames selected.
 						for i := activeSelection.start(); i < activeSelection.end(); i++ {
