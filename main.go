@@ -473,6 +473,16 @@ func runEditor() {
 						}
 					}
 
+					// Make sure the new frames are in view. Only do this if
+					// less than a screen full of frames is selected. In case
+					// the user hits Shift+End we do not want the view to skip
+					// all the way to the end. In this case, we leave the view
+					// as is.
+					if activeSelection.count() < frameCountX*frameCountY {
+						leftMostFrame = min(leftMostFrame, activeSelection.start())
+						leftMostFrame = max(leftMostFrame, activeSelection.end()-frameCountX*frameCountY)
+					}
+
 					emulateFromIndex = min(dragStartSelection.start(), activeSelection.start())
 					render()
 				}
@@ -816,7 +826,7 @@ func runEditor() {
 						lastAction.frameIndex = activeSelection.start()
 						lastAction.button = b
 						lastAction.down = down
-						lastAction.count = activeSelection.end() - activeSelection.start()
+						lastAction.count = activeSelection.count()
 					}
 
 					emulateFromIndex = firstFrameIndex
@@ -1211,6 +1221,10 @@ func (s *frameSelection) start() int {
 
 func (s *frameSelection) end() int {
 	return max(s.first, s.last) + 1
+}
+
+func (s *frameSelection) count() int {
+	return abs(s.first-s.last) + 1
 }
 
 // IOBinding provides an interface for display and input bindings.
