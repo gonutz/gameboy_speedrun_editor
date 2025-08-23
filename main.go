@@ -731,6 +731,14 @@ func runEditor() {
 				pixelgl.KeyE: ButtonSelect,
 			}
 
+			if win.JustPressed(pixelgl.KeyBackspace) ||
+				win.JustPressed(pixelgl.KeyDelete) {
+				for i := activeSelection.start(); i < activeSelection.end(); i++ {
+					frameInputs[i] = 0
+				}
+				render()
+			}
+
 			for key, b := range keyMap {
 				if win.JustPressed(key) {
 					resetInfoText()
