@@ -89,6 +89,8 @@ func runEditor() {
 	doubleClickPending := false
 	pendingDoubleClickFrame := -1
 
+	controlWasDown := false
+
 	// We can toggle between the editor which freezes time and shows multiple
 	// frames at once and running the emulator which replays the game in
 	// real-time using our edited inputs.
@@ -408,8 +410,77 @@ func runEditor() {
 
 			// Handle inputs.
 
+			lastLeftMostFrame := leftMostFrame
+			lastActiveFrames := activeSelection
+
 			shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
 			controlDown := win.Pressed(pixelgl.KeyLeftControl) || win.Pressed(pixelgl.KeyRightControl)
+
+			startDraggingFrameInputs := func(atFrame int) {
+				// Start dragging frame inputs around with the keyboard.
+				dragStartFrame = atFrame
+				dragStartSelection = activeSelection
+				toCopy := frameInputs[activeSelection.start():activeSelection.end()]
+				dragStartInputs = append(dragStartInputs[:0], toCopy...)
+				stateBeforeDrag.frames = append(stateBeforeDrag.frames[:0], toCopy...)
+				stateBeforeDrag.start = activeSelection.start()
+			}
+
+			dragFrameInputsTo := func(selectionOffset int) {
+				activeSelection = dragStartSelection
+				activeSelection.first = max(0, activeSelection.first+selectionOffset)
+				activeSelection.last = max(0, activeSelection.last+selectionOffset)
+
+				if activeSelection != lastActiveFrames {
+					// Reset the input state to before the start of the drag.
+					for i := range stateBeforeDrag.frames {
+						frameInputs[stateBeforeDrag.start+i] = stateBeforeDrag.frames[i]
+					}
+
+					changeStart := min(dragStartSelection.start(), activeSelection.start())
+					changeEnd := max(dragStartSelection.end(), activeSelection.end())
+
+					for changeEnd >= len(frameInputs) {
+						frameInputs = append(frameInputs, defaultInputs)
+					}
+
+					stateBeforeDrag.start = changeStart
+					stateBeforeDrag.frames = append(stateBeforeDrag.frames[:0], frameInputs[changeStart:changeEnd+1]...)
+
+					var fillLeft inputState
+					if dragStartSelection.start() >= 1 {
+						fillLeft = frameInputs[dragStartSelection.start()-1]
+					}
+
+					fillRight := defaultInputs
+					end := dragStartSelection.end()
+					if end < len(frameInputs) {
+						fillRight = frameInputs[end]
+					}
+
+					for i := dragStartSelection.start(); i < activeSelection.start(); i++ {
+						frameInputs[i] = fillLeft
+					}
+
+					for i := activeSelection.end(); i < dragStartSelection.end(); i++ {
+						frameInputs[i] = fillRight
+					}
+
+					for i := len(dragStartInputs) - 1; i >= 0; i-- {
+						j := dragStartSelection.end() - 1 - i + selectionOffset
+						if j >= 0 {
+							frameInputs[j] = dragStartInputs[i]
+						}
+					}
+
+					emulateFromIndex = min(dragStartSelection.start(), activeSelection.start())
+					render()
+				}
+			}
+
+			if controlDown && !controlWasDown {
+				startDraggingFrameInputs(activeSelection.first)
+			}
 
 			for i := range 10 {
 				if win.JustPressed(pixelgl.Key0+pixelgl.Button(i)) ||
@@ -470,9 +541,6 @@ func runEditor() {
 				}
 			}
 
-			lastLeftMostFrame := leftMostFrame
-			lastActiveFrames := activeSelection
-
 			frameDelta := 0
 			keyRepeatCountdown--
 			keyTriggered := func(key pixelgl.Button) bool {
@@ -532,7 +600,8 @@ func runEditor() {
 						leftMostFrame += frameDelta
 					}
 				} else if controlDown && scrollDelta.Y == 0 {
-					// TODO Move the frames.
+					selectionOffset := activeSelection.first - dragStartSelection.first + frameDelta
+					dragFrameInputsTo(selectionOffset)
 				} else {
 					leftMostFrame = max(0, leftMostFrame+frameDelta)
 				}
@@ -579,12 +648,7 @@ func runEditor() {
 						if shiftDown {
 							activeSelection.last = frameUnderMouse
 						} else if controlDown {
-							dragStartFrame = frameUnderMouse
-							dragStartSelection = activeSelection
-							toCopy := frameInputs[activeSelection.start():activeSelection.end()]
-							dragStartInputs = append(dragStartInputs[:0], toCopy...)
-							stateBeforeDrag.frames = append(stateBeforeDrag.frames[:0], toCopy...)
-							stateBeforeDrag.start = activeSelection.start()
+							startDraggingFrameInputs(frameUnderMouse)
 						} else {
 							// On single-click, make the frame under the mouse active.
 							activeSelection.first = frameUnderMouse
@@ -625,55 +689,7 @@ func runEditor() {
 
 			if leftMouseButtonDown && dragStartFrame != -1 && frameUnderMouse != -1 {
 				selectionOffset := frameUnderMouse - dragStartFrame
-				activeSelection = dragStartSelection
-				activeSelection.first = max(0, activeSelection.first+selectionOffset)
-				activeSelection.last = max(0, activeSelection.last+selectionOffset)
-
-				if activeSelection != lastActiveFrames {
-					// Reset the input state to before the start of the drag.
-					for i := range stateBeforeDrag.frames {
-						frameInputs[stateBeforeDrag.start+i] = stateBeforeDrag.frames[i]
-					}
-
-					changeStart := min(dragStartSelection.start(), activeSelection.start())
-					changeEnd := max(dragStartSelection.end(), activeSelection.end())
-
-					for changeEnd >= len(frameInputs) {
-						frameInputs = append(frameInputs, defaultInputs)
-					}
-
-					stateBeforeDrag.start = changeStart
-					stateBeforeDrag.frames = append(stateBeforeDrag.frames[:0], frameInputs[changeStart:changeEnd+1]...)
-
-					var fillLeft inputState
-					if dragStartSelection.start() >= 1 {
-						fillLeft = frameInputs[dragStartSelection.start()-1]
-					}
-
-					fillRight := defaultInputs
-					end := dragStartSelection.end()
-					if end < len(frameInputs) {
-						fillRight = frameInputs[end]
-					}
-
-					for i := dragStartSelection.start(); i < activeSelection.start(); i++ {
-						frameInputs[i] = fillLeft
-					}
-
-					for i := activeSelection.end(); i < dragStartSelection.end(); i++ {
-						frameInputs[i] = fillRight
-					}
-
-					for i := len(dragStartInputs) - 1; i >= 0; i-- {
-						j := dragStartSelection.end() - 1 - i + selectionOffset
-						if j >= 0 {
-							frameInputs[j] = dragStartInputs[i]
-						}
-					}
-
-					emulateFromIndex = min(dragStartSelection.start(), activeSelection.start())
-					render()
-				}
+				dragFrameInputsTo(selectionOffset)
 			}
 
 			if !leftMouseButtonDown {
@@ -1048,6 +1064,8 @@ func runEditor() {
 					canvas.SetPixels(pixels)
 				}
 			}
+
+			controlWasDown = controlDown
 
 			win.Update()
 		}
