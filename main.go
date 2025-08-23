@@ -1043,7 +1043,14 @@ func runEditor() {
 						}
 
 						// Render the text above the frame.
-						text := strconv.Itoa(frameIndex)
+						textY := screenOffsetY - 1
+
+						topLeftText := strconv.Itoa(frameIndex)
+						textRenderer.Dot = fixed.P(screenOffsetX, textY)
+						textRenderer.DrawString(topLeftText)
+						topLeftTextWidth := len(topLeftText) * charWidth
+
+						text := ""
 						add := func(b Button, pressed string) {
 							if isButtonDown(inputs, b) {
 								text += " " + pressed
@@ -1059,7 +1066,8 @@ func runEditor() {
 						add(ButtonStart, "Start")
 
 						textWidth := len(text) * charWidth
-						textRenderer.Dot = fixed.P(screenOffsetX+(frameWidth-textWidth)/2, screenOffsetY-1)
+						textX := screenOffsetX + (topLeftTextWidth+ScreenWidth-textWidth)/2
+						textRenderer.Dot = fixed.P(textX, textY)
 						textRenderer.DrawString(text)
 
 						frameIndex++
