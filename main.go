@@ -515,6 +515,7 @@ func runEditor() {
 
 			shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
 			controlDown := win.Pressed(pixelgl.KeyLeftControl) || win.Pressed(pixelgl.KeyRightControl)
+			altDown := win.Pressed(pixelgl.KeyLeftAlt) || win.Pressed(pixelgl.KeyRightAlt)
 
 			startDraggingFrameInputs := func(atFrame int) {
 				// Start dragging frame inputs around with the keyboard.
@@ -699,6 +700,10 @@ func runEditor() {
 			scrollDelta := win.MouseScroll()
 			if scrollDelta.Y != 0 {
 				ticks := -int(scrollDelta.Y)
+				// By default we scroll down a whole line of frames.
+				// Holding Shift will scroll a single frame at a time.
+				// Holding Control will scroll a whole screen full of frames at
+				// a time.
 				frameDelta = ticks * frameCountX
 				if shiftDown {
 					frameDelta = ticks
@@ -707,6 +712,9 @@ func runEditor() {
 				}
 			}
 
+			// On Enter and G we go to the frame number that was typed in. In
+			// this case it is not a repeat count but an absolute frame number
+			// (index + 1).
 			if repeatCountValid &&
 				(win.JustPressed(pixelgl.KeyG) ||
 					win.JustPressed(pixelgl.KeyEnter) ||
@@ -729,6 +737,10 @@ func runEditor() {
 				} else if controlDown && scrollDelta.Y == 0 {
 					selectionOffset := activeSelection.first - dragStartSelection.first + frameDelta
 					dragFrameInputsTo(selectionOffset)
+				} else if altDown && scrollDelta.Y == 0 {
+					last := len(frameInputs) - 1
+					activeSelection.first = max(0, min(last, activeSelection.first+frameDelta))
+					activeSelection.last = max(0, min(last, activeSelection.last+frameDelta))
 				} else {
 					leftMostFrame = max(0, leftMostFrame+frameDelta)
 				}
