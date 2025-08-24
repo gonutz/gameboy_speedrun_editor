@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,8 @@ func runEditor() {
 		frames []inputState
 	}
 
+	frameCache := newFrameCache()
+
 	doubleClickPending := false
 	pendingDoubleClickFrame := -1
 
@@ -95,7 +98,8 @@ func runEditor() {
 	// frames at once and running the emulator which replays the game in
 	// real-time using our edited inputs.
 	replayingGame := false
-	replayFrameIndex := 0
+	replayPaused := false
+	nextReplayFrame := 0
 	var emulatorGameboy Gameboy
 	emulatorBackbuffer := &pixel.PictureData{
 		Pix:    make([]color.RGBA, ScreenWidth*ScreenHeight),
@@ -289,12 +293,15 @@ func runEditor() {
 		var inputs inputState
 
 		if replayingGame {
+			// While in game if we have used up the last inputs, we forever
+			// press the default inputs.
 			if frameIndex < len(frameInputs) {
 				inputs = frameInputs[frameIndex]
 			} else {
 				inputs = defaultInputs
 			}
 		} else {
+			// In the editor, we extend the frame inputs of we reach their end.
 			for frameIndex >= len(frameInputs) {
 				frameInputs = append(frameInputs, defaultInputs)
 			}
@@ -324,6 +331,47 @@ func runEditor() {
 		}
 	}
 
+	createKeyFramesUpTo := func(keyFrameIndex int) {
+		for keyFrameIndex >= len(keyFrameStates) {
+			last := len(keyFrameStates) - 1
+
+			if last == -1 {
+				gb := NewGameboy(rom, GameboyOptions{})
+				updateGameboy(&gb, 0)
+				keyFrameStates = append(keyFrameStates, gb)
+			} else {
+				gb := keyFrameStates[last]
+				for i := range keyFrameInterval {
+					updateGameboy(&gb, last*keyFrameInterval+i+1)
+				}
+				keyFrameStates = append(keyFrameStates, gb)
+			}
+		}
+	}
+
+	initReplayFrame := func(frameIndex int) {
+		frameIndex = max(0, frameIndex)
+
+		if frameCache.contains(frameIndex) {
+			emulatorGameboy = frameCache.at(frameIndex)
+		} else {
+			keyFrameIndex := frameIndex / keyFrameInterval
+			createKeyFramesUpTo(keyFrameIndex)
+			emulatorGameboy = keyFrameStates[keyFrameIndex]
+
+			currentFrame := keyFrameIndex * keyFrameInterval
+			for currentFrame < frameIndex {
+				currentFrame++
+				updateGameboy(&emulatorGameboy, currentFrame)
+				frameCache.set(currentFrame, emulatorGameboy)
+			}
+		}
+
+		emulatorGameboy.Sound.Init(!*mute)
+		nextReplayFrame = frameIndex + 1
+		unmuteSound()
+	}
+
 	const (
 		charWidth   = 7
 		charHeight  = 13
@@ -350,7 +398,16 @@ func runEditor() {
 		}
 
 		if win.JustPressed(pixelgl.KeySpace) {
-			toggleReplay = true
+			if replayingGame {
+				replayPaused = !replayPaused
+				if replayPaused {
+					muteSound()
+				} else {
+					unmuteSound()
+				}
+			} else {
+				toggleReplay = true
+			}
 		}
 
 		if toggleReplay {
@@ -359,11 +416,9 @@ func runEditor() {
 			resetInfoText()
 
 			if replayingGame {
-				start := max(0, min(leftMostFrame/keyFrameInterval-1, len(keyFrameStates)-1))
-				emulatorGameboy = keyFrameStates[start]
-				emulatorGameboy.Sound.Init(!*mute)
-				replayFrameIndex = start*keyFrameInterval + 1
-				unmuteSound()
+				replayPaused = false
+				frameCache.clear()
+				initReplayFrame(leftMostFrame)
 			} else {
 				muteSound()
 			}
@@ -372,8 +427,38 @@ func runEditor() {
 		}
 
 		if replayingGame {
-			updateGameboy(&emulatorGameboy, replayFrameIndex)
-			replayFrameIndex++
+			frameDelta := 1
+			if replayPaused {
+				frameDelta = 0
+			}
+			if win.JustPressed(pixelgl.KeyHome) {
+				frameDelta = -nextReplayFrame
+			} else if win.Pressed(pixelgl.KeyLeft) {
+				frameDelta = -1
+			} else if win.Pressed(pixelgl.KeyUp) {
+				frameDelta = -5
+			} else if win.Pressed(pixelgl.KeyPageUp) {
+				frameDelta = -20
+			} else if win.Pressed(pixelgl.KeyRight) {
+				if replayPaused {
+					frameDelta = 1
+				} else {
+					frameDelta = 2
+				}
+			} else if win.Pressed(pixelgl.KeyDown) {
+				frameDelta = 5
+			} else if win.Pressed(pixelgl.KeyPageDown) {
+				frameDelta = 20
+			}
+
+			if frameDelta < 0 {
+				initReplayFrame(nextReplayFrame - 1 + frameDelta)
+			} else {
+				for range frameDelta {
+					updateGameboy(&emulatorGameboy, nextReplayFrame)
+					nextReplayFrame++
+				}
+			}
 
 			for y := range ScreenHeight {
 				for x := range ScreenWidth {
@@ -862,22 +947,7 @@ func runEditor() {
 				lastValidKeyFrame = min(lastValidKeyFrame, len(keyFrameStates))
 				keyFrameStates = keyFrameStates[:lastValidKeyFrame]
 
-				// Create new keyframes if necessary.
-				for keyFrameIndex >= len(keyFrameStates) {
-					last := len(keyFrameStates) - 1
-
-					if last == -1 {
-						gb := NewGameboy(rom, GameboyOptions{})
-						updateGameboy(&gb, 0)
-						keyFrameStates = append(keyFrameStates, gb)
-					} else {
-						gb := keyFrameStates[last]
-						for i := range keyFrameInterval {
-							updateGameboy(&gb, last*keyFrameInterval+i+1)
-						}
-						keyFrameStates = append(keyFrameStates, gb)
-					}
-				}
+				createKeyFramesUpTo(keyFrameIndex)
 
 				emulateFromIndex = len(keyFrameStates) * keyFrameInterval
 
@@ -1239,6 +1309,53 @@ func (s *frameSelection) end() int {
 
 func (s *frameSelection) count() int {
 	return abs(s.first-s.last) + 1
+}
+
+func newFrameCache() *frameCache {
+	return &frameCache{}
+}
+
+const frameCacheSize = 100
+
+type frameCache struct {
+	frameIndices      []int
+	gameboys          []Gameboy
+	nextIndexToRemove int
+}
+
+func (c *frameCache) clear() {
+	c.frameIndices = c.frameIndices[:0]
+	c.gameboys = c.gameboys[:0]
+	c.nextIndexToRemove = 0
+}
+
+func (c *frameCache) contains(frameIndex int) bool {
+	return slices.Contains(c.frameIndices, frameIndex)
+}
+
+func (c *frameCache) at(frameIndex int) Gameboy {
+	i := slices.Index(c.frameIndices, frameIndex)
+	if i == -1 {
+		return Gameboy{}
+	}
+	return c.gameboys[i]
+}
+
+func (c *frameCache) set(frameIndex int, gb Gameboy) {
+	i := slices.Index(c.frameIndices, frameIndex)
+	if i != -1 {
+		c.gameboys[i] = gb
+	} else {
+		if len(c.gameboys) < frameCacheSize {
+			c.frameIndices = append(c.frameIndices, frameIndex)
+			c.gameboys = append(c.gameboys, gb)
+		} else {
+			j := c.nextIndexToRemove
+			c.frameIndices[j] = frameIndex
+			c.gameboys[j] = gb
+			c.nextIndexToRemove = (c.nextIndexToRemove + 1) % frameCacheSize
+		}
+	}
 }
 
 // IOBinding provides an interface for display and input bindings.
