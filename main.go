@@ -416,7 +416,6 @@ func runEditor() {
 			resetInfoText()
 
 			if replayingGame {
-				replayPaused = false
 				frameCache.clear()
 				initReplayFrame(leftMostFrame)
 			} else {
@@ -427,39 +426,7 @@ func runEditor() {
 		}
 
 		if replayingGame {
-			frameDelta := 1
-			if replayPaused {
-				frameDelta = 0
-			}
-			if win.JustPressed(pixelgl.KeyHome) {
-				frameDelta = -nextReplayFrame
-			} else if win.Pressed(pixelgl.KeyLeft) {
-				frameDelta = -1
-			} else if win.Pressed(pixelgl.KeyUp) {
-				frameDelta = -5
-			} else if win.Pressed(pixelgl.KeyPageUp) {
-				frameDelta = -20
-			} else if win.Pressed(pixelgl.KeyRight) {
-				if replayPaused {
-					frameDelta = 1
-				} else {
-					frameDelta = 2
-				}
-			} else if win.Pressed(pixelgl.KeyDown) {
-				frameDelta = 5
-			} else if win.Pressed(pixelgl.KeyPageDown) {
-				frameDelta = 20
-			}
-
-			if frameDelta < 0 {
-				initReplayFrame(nextReplayFrame - 1 + frameDelta)
-			} else {
-				for range frameDelta {
-					updateGameboy(&emulatorGameboy, nextReplayFrame)
-					nextReplayFrame++
-				}
-			}
-
+			// Render the current screen.
 			for y := range ScreenHeight {
 				for x := range ScreenWidth {
 					col := emulatorGameboy.PreparedData[x][y]
@@ -484,6 +451,54 @@ func runEditor() {
 			cam := pixel.IM.Scaled(pixel.ZV, scale).Moved(shift)
 			win.SetMatrix(cam)
 
+			// Emulate the next frame.
+			keyRepeatCountdown--
+			keyTriggered := func(key pixelgl.Button) bool {
+				if replayPaused {
+					if win.JustPressed(key) || win.Pressed(key) && keyRepeatCountdown <= 0 {
+						keyRepeatCountdown = 10
+						return true
+					}
+					return false
+				} else {
+					return win.Pressed(key)
+				}
+			}
+
+			frameDelta := 1
+			if replayPaused {
+				frameDelta = 0
+			}
+			if win.JustPressed(pixelgl.KeyHome) {
+				frameDelta = -nextReplayFrame
+			} else if keyTriggered(pixelgl.KeyLeft) {
+				frameDelta = -1
+			} else if keyTriggered(pixelgl.KeyUp) {
+				frameDelta = -5
+			} else if keyTriggered(pixelgl.KeyPageUp) {
+				frameDelta = -20
+			} else if keyTriggered(pixelgl.KeyRight) {
+				if replayPaused {
+					frameDelta = 1
+				} else {
+					frameDelta = 2
+				}
+			} else if keyTriggered(pixelgl.KeyDown) {
+				frameDelta = 5
+			} else if keyTriggered(pixelgl.KeyPageDown) {
+				frameDelta = 20
+			}
+
+			if frameDelta < 0 {
+				initReplayFrame(nextReplayFrame - 1 + frameDelta)
+			} else {
+				for range frameDelta {
+					updateGameboy(&emulatorGameboy, nextReplayFrame)
+					nextReplayFrame++
+				}
+			}
+
+			// Flush the window.
 			win.Update()
 		} else {
 			canvas := win.Canvas()
