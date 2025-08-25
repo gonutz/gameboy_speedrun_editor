@@ -381,8 +381,23 @@ func runEditor() {
 		Face: basicfont.Face7x13,
 	}
 
+	keyMap := map[pixelgl.Button]Button{
+		pixelgl.KeyL: ButtonLeft,
+		pixelgl.KeyU: ButtonUp,
+		pixelgl.KeyR: ButtonRight,
+		pixelgl.KeyD: ButtonDown,
+		pixelgl.KeyA: ButtonA,
+		pixelgl.KeyB: ButtonB,
+		pixelgl.KeyS: ButtonStart,
+		pixelgl.KeyE: ButtonSelect,
+	}
+
 	for !win.Closed() {
 		toggleReplay := false
+
+		shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
+		controlDown := win.Pressed(pixelgl.KeyLeftControl) || win.Pressed(pixelgl.KeyRightControl)
+		altDown := win.Pressed(pixelgl.KeyLeftAlt) || win.Pressed(pixelgl.KeyRightAlt)
 
 		if win.JustPressed(pixelgl.KeyEscape) {
 			if replayingGame {
@@ -451,6 +466,16 @@ func runEditor() {
 			cam := pixel.IM.Scaled(pixel.ZV, scale).Moved(shift)
 			win.SetMatrix(cam)
 
+			// Let the user toggle buttons for the current frame.
+			for key, b := range keyMap {
+				if win.JustPressed(key) {
+					down := isButtonDown(frameInputs[nextReplayFrame], b)
+					setButtonDown(&frameInputs[nextReplayFrame], b, !down)
+					frameCache.clear()
+					emulateFromIndex = nextReplayFrame
+				}
+			}
+
 			// Emulate the next frame.
 			keyRepeatCountdown--
 			keyTriggered := func(key pixelgl.Button) bool {
@@ -511,11 +536,7 @@ func runEditor() {
 			// Handle inputs.
 
 			lastLeftMostFrame := leftMostFrame
-			lastActiveFrames := activeSelection
-
-			shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
-			controlDown := win.Pressed(pixelgl.KeyLeftControl) || win.Pressed(pixelgl.KeyRightControl)
-			altDown := win.Pressed(pixelgl.KeyLeftAlt) || win.Pressed(pixelgl.KeyRightAlt)
+			lastActiveSelection := activeSelection
 
 			startDraggingFrameInputs := func(atFrame int) {
 				// Start dragging frame inputs around with the keyboard.
@@ -527,12 +548,12 @@ func runEditor() {
 				stateBeforeDrag.start = activeSelection.start()
 			}
 
-			dragFrameInputsTo := func(selectionOffset int) {
+			dragFrameInputsTo := func(selectionOffset int, adjustView bool) {
 				activeSelection = dragStartSelection
 				activeSelection.first = max(0, activeSelection.first+selectionOffset)
 				activeSelection.last = max(0, activeSelection.last+selectionOffset)
 
-				if activeSelection != lastActiveFrames {
+				if activeSelection != lastActiveSelection {
 					// Reset the input state to before the start of the drag.
 					for i := range stateBeforeDrag.frames {
 						frameInputs[stateBeforeDrag.start+i] = stateBeforeDrag.frames[i]
@@ -574,14 +595,16 @@ func runEditor() {
 						}
 					}
 
-					// Make sure the new frames are in view. Only do this if
-					// less than a screen full of frames is selected. In case
-					// the user hits Shift+End we do not want the view to skip
-					// all the way to the end. In this case, we leave the view
-					// as is.
-					if activeSelection.count() < frameCountX*frameCountY {
-						leftMostFrame = min(leftMostFrame, activeSelection.start())
-						leftMostFrame = max(leftMostFrame, activeSelection.end()-frameCountX*frameCountY)
+					if adjustView {
+						// Make sure the new frames are in view. Only do this if
+						// less than a screen full of frames is selected. In case
+						// the user hits Shift+End we do not want the view to skip
+						// all the way to the end. In this case, we leave the view
+						// as is.
+						if activeSelection.count() < frameCountX*frameCountY {
+							leftMostFrame = min(leftMostFrame, activeSelection.start())
+							leftMostFrame = max(leftMostFrame, activeSelection.end()-frameCountX*frameCountY)
+						}
 					}
 
 					emulateFromIndex = min(dragStartSelection.start(), activeSelection.start())
@@ -736,7 +759,7 @@ func runEditor() {
 					}
 				} else if controlDown && scrollDelta.Y == 0 {
 					selectionOffset := activeSelection.first - dragStartSelection.first + frameDelta
-					dragFrameInputsTo(selectionOffset)
+					dragFrameInputsTo(selectionOffset, true)
 				} else if altDown && scrollDelta.Y == 0 {
 					last := len(frameInputs) - 1
 					activeSelection.first = max(0, min(last, activeSelection.first+frameDelta))
@@ -828,7 +851,7 @@ func runEditor() {
 
 			if leftMouseButtonDown && dragStartFrame != -1 && frameUnderMouse != -1 {
 				selectionOffset := frameUnderMouse - dragStartFrame
-				dragFrameInputsTo(selectionOffset)
+				dragFrameInputsTo(selectionOffset, false)
 			}
 
 			if !leftMouseButtonDown {
@@ -870,20 +893,9 @@ func runEditor() {
 			}
 
 			if leftMostFrame != lastLeftMostFrame ||
-				activeSelection != lastActiveFrames {
+				activeSelection != lastActiveSelection {
 				resetInfoText()
 				render()
-			}
-
-			keyMap := map[pixelgl.Button]Button{
-				pixelgl.KeyL: ButtonLeft,
-				pixelgl.KeyU: ButtonUp,
-				pixelgl.KeyR: ButtonRight,
-				pixelgl.KeyD: ButtonDown,
-				pixelgl.KeyA: ButtonA,
-				pixelgl.KeyB: ButtonB,
-				pixelgl.KeyS: ButtonStart,
-				pixelgl.KeyE: ButtonSelect,
 			}
 
 			if win.JustPressed(pixelgl.KeyBackspace) ||
