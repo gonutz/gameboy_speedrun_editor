@@ -69,6 +69,8 @@ func main() {
 
 	frameCache := newFrameCache()
 
+	var gameboyScreenBuffer []byte
+
 	doubleClickPending := false
 	pendingDoubleClickFrame := -1
 
@@ -979,17 +981,44 @@ func main() {
 				// TODO Remember these until we change frames.
 				screens := emulateFrames(leftMostFrame, lastVisibleFrame)
 
-				// TODO Optimize this away.
-				screenPixels := make([]byte, ScreenWidth*ScreenHeight*4)
-				for i := 3; i < len(screenPixels); i += 4 {
-					screenPixels[i] = 255
+				screenCount := frameCountX * frameCountY
+				bytesPerScreen := ScreenWidth * ScreenHeight * 4
+				screenBufferSize := screenCount * bytesPerScreen
+				if cap(gameboyScreenBuffer) < screenBufferSize {
+					gameboyScreenBuffer = make([]byte, screenBufferSize)
+					for i := 3; i < len(gameboyScreenBuffer); i += 4 {
+						gameboyScreenBuffer[i] = 255
+					}
 				}
+				gameboyScreenBuffer = gameboyScreenBuffer[:screenBufferSize]
+
+				bufferW := frameCountX * ScreenWidth
+				bufferH := frameCountY * ScreenHeight
+				for frameY := range frameCountY {
+					for frameX := range frameCountX {
+						screenOffsetX := frameX * ScreenWidth
+						screenOffsetY := frameY * ScreenHeight
+						screen := screens[frameX+frameY*frameCountX]
+						for y := range ScreenHeight {
+							for x := range ScreenWidth {
+								c := screen[x][y]
+								destX := screenOffsetX + x
+								destY := screenOffsetY + y
+								dest := 4 * (destX + destY*bufferW)
+								copy(gameboyScreenBuffer[dest:], c[:])
+							}
+						}
+					}
+				}
+
+				window.CreateImage("gameboyScreens", bufferW, bufferH)
+				window.SetImagePixels("gameboyScreens", gameboyScreenBuffer)
 
 				frameIndex := leftMostFrame
 				for frameY := range frameCountY {
 					for frameX := range frameCountX {
 						screenOffsetX := frameX*frameWidth + 1
-						screenOffsetY := frameY*frameHeight + 13
+						screenOffsetY := frameY*frameHeight + fontHeight
 						inputs := frameInputs[frameIndex]
 
 						// Determine color by button state for this frame.
@@ -1053,28 +1082,18 @@ func main() {
 						window.FillRect(frameLeft+frameWidth-1, frameTop, 1, frameHeight, borderColor)
 
 						// Render the Gameboy screen.
-						window.CreateImage("gameboyScreen", ScreenWidth, ScreenHeight)
 
-						// TODO Overlay highlight on GPU.
+						window.DrawImageFilePart(
+							"gameboyScreens",
+							frameX*ScreenWidth, frameY*ScreenHeight, ScreenWidth, ScreenHeight,
+							screenOffsetX, screenOffsetY, ScreenWidth, ScreenHeight,
+							0,
+						)
 						isActiveFrame := activeSelection.start() <= frameIndex && frameIndex < activeSelection.end()
-						screenIndex := frameIndex - leftMostFrame
-						screen := screens[screenIndex]
-						for y := range ScreenHeight {
-							for x := range ScreenWidth {
-								c := screen[x][y]
-								if isActiveFrame {
-									// Make the active frame brighter.
-									c[0] = byte(min(255, int(c[0])+60))
-									c[1] = byte(min(255, int(c[1])+10))
-									c[2] = byte(min(255, int(c[2])+10))
-								}
-								dest := 4 * (x + y*ScreenWidth)
-								copy(screenPixels[dest:], c[:])
-							}
+						if isActiveFrame {
+							highlightColor := draw.RGBA(1, 0.5, 0.5, 0.2)
+							window.FillRect(screenOffsetX, screenOffsetY, ScreenWidth, ScreenHeight, highlightColor)
 						}
-
-						window.SetImagePixels("gameboyScreen", screenPixels)
-						window.DrawImageFile("gameboyScreen", screenOffsetX, screenOffsetY)
 
 						// Render the text above the frame.
 						textY := frameY * frameHeight
