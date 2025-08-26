@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/draw"
 	"image/png"
 	"log"
 	"math"
@@ -19,13 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/basicfont"
-	"golang.org/x/image/math/fixed"
-
-	"github.com/faiface/mainthread"
-	"github.com/faiface/pixel"
-	"github.com/faiface/pixel/pixelgl"
+	"github.com/gonutz/prototype/draw"
 	"github.com/sqweek/dialog"
 )
 
@@ -39,10 +32,7 @@ var (
 
 func main() {
 	flag.Parse()
-	pixelgl.Run(runEditor)
-}
 
-func runEditor() {
 	romFile := getROM()
 
 	rom, err := os.ReadFile(romFile)
@@ -51,16 +41,6 @@ func runEditor() {
 	globalROM = rom
 
 	const windowWidth, windowHeight = 1500, 800
-	win, err := pixelgl.NewWindow(pixelgl.WindowConfig{
-		Title:     "Gameboy Speedrun Editor",
-		Bounds:    pixel.R(0, 0, windowWidth, windowHeight),
-		VSync:     true,
-		Resizable: true,
-	})
-	check(err)
-
-	// Hack so that pixelgl renders on Darwin.
-	win.SetPos(pixel.Vec{X: 200, Y: 150})
 
 	// The following variables are the actual state of the editor that gets
 	// saved to and loaded from disk:
@@ -101,13 +81,6 @@ func runEditor() {
 	replayPaused := false
 	nextReplayFrame := 0
 	var emulatorGameboy Gameboy
-	emulatorBackbuffer := &pixel.PictureData{
-		Pix:    make([]color.RGBA, ScreenWidth*ScreenHeight),
-		Stride: ScreenWidth,
-		Rect:   pixel.R(0, 0, ScreenWidth, ScreenHeight),
-	}
-
-	var pixels []uint8
 
 	// We generate Gameboy screens to be display in our editor.
 	// screenBuffer is a temporary buffer that we reuse in every frame.
@@ -137,16 +110,16 @@ func runEditor() {
 	}
 
 	infoText := ""
-	infoTextColor := color.RGBA{255, 255, 255, 255}
+	infoTextColor := draw.RGBA(1, 1, 1, 1)
 
 	setInfo := func(msg string) {
 		infoText = msg
-		infoTextColor = color.RGBA{255, 255, 255, 255}
+		infoTextColor = draw.RGBA(1, 1, 1, 1)
 	}
 
 	setWarning := func(msg string) {
 		infoText = msg
-		infoTextColor = color.RGBA{255, 92, 92, 255}
+		infoTextColor = draw.RGBA(1, 92/255.0, 92/255.0, 1)
 	}
 
 	resetInfoText := func() {
@@ -285,6 +258,7 @@ func runEditor() {
 	loadLastSpeedrun()
 	defer saveCurrentSpeedrun()
 
+	const textScale = 0.8
 	const fontHeight = 13
 	const frameWidth = 1 + ScreenWidth + 1
 	const frameHeight = fontHeight + ScreenHeight + 1
@@ -319,16 +293,10 @@ func runEditor() {
 		gameboy.Update()
 	}
 
-	toggleFullscreen := func() {
-		if win.Monitor() == nil {
-			monitor := pixelgl.PrimaryMonitor()
-			_, height := monitor.Size()
-			win.SetMonitor(monitor)
-			PixelScale = height / 144
-		} else {
-			win.SetMonitor(nil)
-			PixelScale = 3
-		}
+	fullscreen := false
+	toggleFullscreen := func(window draw.Window) {
+		fullscreen = !fullscreen
+		window.SetFullscreen(fullscreen)
 	}
 
 	createKeyFramesUpTo := func(keyFrameIndex int) {
@@ -377,29 +345,30 @@ func runEditor() {
 		charHeight  = 13
 		fontDescend = 3
 	)
-	textRenderer := font.Drawer{
-		Face: basicfont.Face7x13,
+
+	keyMap := map[draw.Key]Button{
+		draw.KeyL: ButtonLeft,
+		draw.KeyU: ButtonUp,
+		draw.KeyR: ButtonRight,
+		draw.KeyD: ButtonDown,
+		draw.KeyA: ButtonA,
+		draw.KeyB: ButtonB,
+		draw.KeyS: ButtonStart,
+		draw.KeyE: ButtonSelect,
 	}
 
-	keyMap := map[pixelgl.Button]Button{
-		pixelgl.KeyL: ButtonLeft,
-		pixelgl.KeyU: ButtonUp,
-		pixelgl.KeyR: ButtonRight,
-		pixelgl.KeyD: ButtonDown,
-		pixelgl.KeyA: ButtonA,
-		pixelgl.KeyB: ButtonB,
-		pixelgl.KeyS: ButtonStart,
-		pixelgl.KeyE: ButtonSelect,
-	}
+	lastWindowW, lastWindowH := 0, 0
 
-	for !win.Closed() {
+	check(draw.RunWindow("Gameboy Speedrun Editor", windowWidth, windowHeight, func(window draw.Window) {
+		windowW, windowH := window.Size()
+		mouseX, mouseY := window.MousePosition()
+
+		shiftDown := window.IsKeyDown(draw.KeyLeftShift) || window.IsKeyDown(draw.KeyRightShift)
+		controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
+		altDown := window.IsKeyDown(draw.KeyLeftAlt) || window.IsKeyDown(draw.KeyRightAlt)
+
 		toggleReplay := false
-
-		shiftDown := win.Pressed(pixelgl.KeyLeftShift) || win.Pressed(pixelgl.KeyRightShift)
-		controlDown := win.Pressed(pixelgl.KeyLeftControl) || win.Pressed(pixelgl.KeyRightControl)
-		altDown := win.Pressed(pixelgl.KeyLeftAlt) || win.Pressed(pixelgl.KeyRightAlt)
-
-		if win.JustPressed(pixelgl.KeyEscape) {
+		if window.WasKeyPressed(draw.KeyEscape) {
 			if replayingGame {
 				toggleReplay = true
 			} else if infoText != "" {
@@ -408,11 +377,11 @@ func runEditor() {
 			}
 		}
 
-		if win.JustPressed(pixelgl.KeyF11) || win.JustPressed(pixelgl.KeyF) {
-			toggleFullscreen()
+		if window.WasKeyPressed(draw.KeyF11) || window.WasKeyPressed(draw.KeyF) {
+			toggleFullscreen(window)
 		}
 
-		if win.JustPressed(pixelgl.KeySpace) {
+		if window.WasKeyPressed(draw.KeySpace) {
 			if replayingGame {
 				replayPaused = !replayPaused
 				if replayPaused {
@@ -442,33 +411,36 @@ func runEditor() {
 
 		if replayingGame {
 			// Render the current screen.
+			window.CreateImage("gameboyScreen", ScreenWidth, ScreenHeight)
+			rgba := make([]byte, 4*ScreenWidth*ScreenHeight)
+			i := 0
 			for y := range ScreenHeight {
 				for x := range ScreenWidth {
-					col := emulatorGameboy.PreparedData[x][y]
-					rgb := color.RGBA{R: col[0], G: col[1], B: col[2], A: 0xFF}
-					emulatorBackbuffer.Pix[(ScreenHeight-1-y)*ScreenWidth+x] = rgb
+					color := emulatorGameboy.PreparedData[x][y]
+					rgba[i+0] = color[0]
+					rgba[i+1] = color[1]
+					rgba[i+2] = color[2]
+					rgba[i+3] = 255
+					i += 4
 				}
 			}
+			window.SetImagePixels("gameboyScreen", rgba)
 
-			col := ColorPalette[3]
-			bg := color.RGBA{R: col[0], G: col[1], B: col[2], A: 0xFF}
-			win.Clear(bg)
+			window.FillRect(0, 0, windowW, windowH, toColor(ColorPalette[3]))
 
-			spr := pixel.NewSprite(pixel.Picture(emulatorBackbuffer), pixel.R(0, 0, ScreenWidth, ScreenHeight))
-			spr.Draw(win, pixel.IM)
-
-			// Letterbox the emulator into our window.
-			xScale := win.Bounds().W() / 160
-			yScale := win.Bounds().H() / 144
+			// Letterbox the Gameboy screen into our window.
+			xScale := float64(windowW) / ScreenWidth
+			yScale := float64(windowH) / ScreenHeight
 			scale := math.Min(yScale, xScale)
-
-			shift := win.Bounds().Size().Scaled(0.5).Sub(pixel.ZV)
-			cam := pixel.IM.Scaled(pixel.ZV, scale).Moved(shift)
-			win.SetMatrix(cam)
+			w := round(scale * ScreenWidth)
+			h := round(scale * ScreenHeight)
+			x := (windowW - w) / 2
+			y := (windowH - h) / 2
+			window.DrawImageFileTo("gameboyScreen", x, y, w, h, 0)
 
 			// Let the user toggle buttons for the current frame.
 			for key, b := range keyMap {
-				if win.JustPressed(key) {
+				if window.WasKeyPressed(key) {
 					down := isButtonDown(frameInputs[nextReplayFrame], b)
 					setButtonDown(&frameInputs[nextReplayFrame], b, !down)
 					frameCache.clear()
@@ -478,15 +450,15 @@ func runEditor() {
 
 			// Emulate the next frame.
 			keyRepeatCountdown--
-			keyTriggered := func(key pixelgl.Button) bool {
+			keyTriggered := func(key draw.Key) bool {
 				if replayPaused {
-					if win.JustPressed(key) || win.Pressed(key) && keyRepeatCountdown <= 0 {
+					if window.WasKeyPressed(key) || window.IsKeyDown(key) && keyRepeatCountdown <= 0 {
 						keyRepeatCountdown = 10
 						return true
 					}
 					return false
 				} else {
-					return win.Pressed(key)
+					return window.IsKeyDown(key)
 				}
 			}
 
@@ -494,23 +466,23 @@ func runEditor() {
 			if replayPaused {
 				frameDelta = 0
 			}
-			if win.JustPressed(pixelgl.KeyHome) {
+			if window.WasKeyPressed(draw.KeyHome) {
 				frameDelta = -nextReplayFrame
-			} else if keyTriggered(pixelgl.KeyLeft) {
+			} else if keyTriggered(draw.KeyLeft) {
 				frameDelta = -1
-			} else if keyTriggered(pixelgl.KeyUp) {
+			} else if keyTriggered(draw.KeyUp) {
 				frameDelta = -5
-			} else if keyTriggered(pixelgl.KeyPageUp) {
+			} else if keyTriggered(draw.KeyPageUp) {
 				frameDelta = -20
-			} else if keyTriggered(pixelgl.KeyRight) {
+			} else if keyTriggered(draw.KeyRight) {
 				if replayPaused {
 					frameDelta = 1
 				} else {
 					frameDelta = 2
 				}
-			} else if keyTriggered(pixelgl.KeyDown) {
+			} else if keyTriggered(draw.KeyDown) {
 				frameDelta = 5
-			} else if keyTriggered(pixelgl.KeyPageDown) {
+			} else if keyTriggered(draw.KeyPageDown) {
 				frameDelta = 20
 			}
 
@@ -522,16 +494,9 @@ func runEditor() {
 					nextReplayFrame++
 				}
 			}
-
-			// Flush the window.
-			win.Update()
 		} else {
-			canvas := win.Canvas()
-			canvasSize := canvas.Bounds().Size()
-			canvasWidth, canvasHeight := int(canvasSize.X), int(canvasSize.Y)
-
-			frameCountX := canvasWidth / frameWidth
-			frameCountY := canvasHeight / frameHeight
+			frameCountX := windowW / frameWidth
+			frameCountY := windowH / frameHeight
 
 			// Handle inputs.
 
@@ -617,8 +582,8 @@ func runEditor() {
 			}
 
 			for i := range 10 {
-				if win.JustPressed(pixelgl.Key0+pixelgl.Button(i)) ||
-					win.JustPressed(pixelgl.KeyKP0+pixelgl.Button(i)) {
+				if window.WasKeyPressed(draw.Key0+draw.Key(i)) ||
+					window.WasKeyPressed(draw.KeyNum0+draw.Key(i)) {
 					_, err := strconv.Atoi(infoText)
 					isNumber := err == nil
 					if !isNumber {
@@ -641,23 +606,23 @@ func runEditor() {
 			if lastAction.valid {
 				newAction := lastAction
 
-				if strings.ContainsAny(win.Typed(), "+p") {
+				if strings.ContainsAny(window.Characters(), "+p") {
 					// Append input to the end.
 					newAction.count += repeatCount
 				}
 
-				if strings.Contains(win.Typed(), "P") {
+				if strings.Contains(window.Characters(), "P") {
 					// Prepend input to the start.
 					newAction.count += repeatCount
 					newAction.frameIndex -= repeatCount
 				}
 
-				if strings.ContainsAny(win.Typed(), "-m") {
+				if strings.ContainsAny(window.Characters(), "-m") {
 					// Remove inputs from the end.
 					newAction.count = max(1, newAction.count-repeatCount)
 				}
 
-				if strings.Contains(win.Typed(), "M") {
+				if strings.Contains(window.Characters(), "M") {
 					delta := min(repeatCount, lastAction.count-1)
 					newAction.frameIndex += delta
 					newAction.count -= delta
@@ -694,35 +659,35 @@ func runEditor() {
 
 			frameDelta := 0
 			keyRepeatCountdown--
-			keyTriggered := func(key pixelgl.Button) bool {
-				if win.JustPressed(key) || win.Pressed(key) && keyRepeatCountdown <= 0 {
+			keyTriggered := func(key draw.Key) bool {
+				if window.WasKeyPressed(key) || window.IsKeyDown(key) && keyRepeatCountdown <= 0 {
 					keyRepeatCountdown = 8
 					return true
 				}
 				return false
 			}
-			if keyTriggered(pixelgl.KeyLeft) {
+			if keyTriggered(draw.KeyLeft) {
 				frameDelta = -repeatCount
 			}
-			if keyTriggered(pixelgl.KeyRight) {
+			if keyTriggered(draw.KeyRight) {
 				frameDelta = repeatCount
 			}
-			if keyTriggered(pixelgl.KeyUp) {
+			if keyTriggered(draw.KeyUp) {
 				frameDelta = -frameCountX * repeatCount
 			}
-			if keyTriggered(pixelgl.KeyDown) {
+			if keyTriggered(draw.KeyDown) {
 				frameDelta = frameCountX * repeatCount
 			}
-			if keyTriggered(pixelgl.KeyPageUp) {
+			if keyTriggered(draw.KeyPageUp) {
 				frameDelta = -frameCountX * frameCountY * repeatCount
 			}
-			if keyTriggered(pixelgl.KeyPageDown) {
+			if keyTriggered(draw.KeyPageDown) {
 				frameDelta = frameCountX * frameCountY * repeatCount
 			}
 
-			scrollDelta := win.MouseScroll()
-			if scrollDelta.Y != 0 {
-				ticks := -int(scrollDelta.Y)
+			scrollY := window.MouseWheelY()
+			if scrollY != 0 {
+				ticks := -int(scrollY)
 				// By default we scroll down a whole line of frames.
 				// Holding Shift will scroll a single frame at a time.
 				// Holding Control will scroll a whole screen full of frames at
@@ -739,16 +704,16 @@ func runEditor() {
 			// this case it is not a repeat count but an absolute frame number
 			// (index + 1).
 			if repeatCountValid &&
-				(win.JustPressed(pixelgl.KeyG) ||
-					win.JustPressed(pixelgl.KeyEnter) ||
-					win.JustPressed(pixelgl.KeyKPEnter)) {
+				(window.WasKeyPressed(draw.KeyG) ||
+					window.WasKeyPressed(draw.KeyEnter) ||
+					window.WasKeyPressed(draw.KeyNumEnter)) {
 				frameDelta = -leftMostFrame + repeatCount
 				resetInfoText()
 				render()
 			}
 
 			if frameDelta != 0 {
-				if shiftDown && scrollDelta.Y == 0 {
+				if shiftDown && scrollY == 0 {
 					activeSelection.last = max(0, activeSelection.last+frameDelta)
 
 					if activeSelection.last < leftMostFrame {
@@ -757,10 +722,10 @@ func runEditor() {
 					if activeSelection.last >= leftMostFrame+frameCountX*frameCountY {
 						leftMostFrame += frameDelta
 					}
-				} else if controlDown && scrollDelta.Y == 0 {
+				} else if controlDown && scrollY == 0 {
 					selectionOffset := activeSelection.first - dragStartSelection.first + frameDelta
 					dragFrameInputsTo(selectionOffset, true)
-				} else if altDown && scrollDelta.Y == 0 {
+				} else if altDown && scrollY == 0 {
 					last := len(frameInputs) - 1
 					activeSelection.first = max(0, min(last, activeSelection.first+frameDelta))
 					activeSelection.last = max(0, min(last, activeSelection.last+frameDelta))
@@ -769,24 +734,20 @@ func runEditor() {
 				}
 			}
 
-			if win.JustPressed(pixelgl.KeyHome) {
+			if window.WasKeyPressed(draw.KeyHome) {
 				if shiftDown {
 					activeSelection.last = 0
 				}
 
 				leftMostFrame = 0
 			}
-			if win.JustPressed(pixelgl.KeyEnd) {
+			if window.WasKeyPressed(draw.KeyEnd) {
 				if shiftDown {
 					activeSelection.last = len(frameInputs) - 1
 				}
 
 				leftMostFrame = len(frameInputs) - frameCountX*frameCountY - 1
 			}
-
-			mouse := win.MousePosition()
-			mouseX := int(mouse.X)
-			mouseY := canvasHeight - 1 - int(mouse.Y)
 
 			frameX := mouseX / frameWidth
 			frameY := mouseY / frameHeight
@@ -796,7 +757,12 @@ func runEditor() {
 				frameUnderMouse = leftMostFrame + frameY*frameCountX + frameX
 			}
 
-			if win.JustPressed(pixelgl.MouseButton1) {
+			leftClick := false
+			for _, c := range window.Clicks() {
+				leftClick = leftClick || c.Button == draw.LeftButton
+			}
+
+			if leftClick {
 				doubleClickPending = time.Now().Sub(lastLeftClick.time).Seconds() < 0.300 &&
 					abs(lastLeftClick.x-mouseX) < 10 &&
 					abs(lastLeftClick.y-mouseY) < 10
@@ -824,7 +790,7 @@ func runEditor() {
 				}
 			}
 
-			leftMouseButtonDown := win.Pressed(pixelgl.MouseButton1)
+			leftMouseButtonDown := window.IsMouseDown(draw.LeftButton)
 
 			if leftMouseButtonDown && frameUnderMouse != -1 {
 				activeSelection.last = frameUnderMouse
@@ -858,11 +824,10 @@ func runEditor() {
 				dragStartFrame = -1
 			}
 
+			rightMouseButtonDown := window.IsMouseDown(draw.RightButton)
+
 			// Use the right mouse button for dragging the screen around.
-			if win.JustPressed(pixelgl.MouseButton2) {
-				mouse := win.MousePosition()
-				mouseX := int(mouse.X)
-				mouseY := canvasHeight - 1 - int(mouse.Y)
+			if rightMouseButtonDown {
 				frameX := mouseX / frameWidth
 				frameY := mouseY / frameHeight
 
@@ -872,12 +837,7 @@ func runEditor() {
 				}
 			}
 
-			rightMouseButtonDown := win.Pressed(pixelgl.MouseButton2)
-
 			if draggingFrameIndex != -1 && rightMouseButtonDown {
-				mouse := win.MousePosition()
-				mouseX := int(mouse.X)
-				mouseY := canvasHeight - 1 - int(mouse.Y)
 				frameX := mouseX / frameWidth
 				frameY := mouseY / frameHeight
 
@@ -898,8 +858,8 @@ func runEditor() {
 				render()
 			}
 
-			if win.JustPressed(pixelgl.KeyBackspace) ||
-				win.JustPressed(pixelgl.KeyDelete) {
+			if window.WasKeyPressed(draw.KeyBackspace) ||
+				window.WasKeyPressed(draw.KeyDelete) {
 				for i := activeSelection.start(); i < activeSelection.end(); i++ {
 					frameInputs[i] = 0
 				}
@@ -907,7 +867,7 @@ func runEditor() {
 			}
 
 			for key, b := range keyMap {
-				if win.JustPressed(key) {
+				if window.WasKeyPressed(key) {
 					resetInfoText()
 
 					firstFrameIndex := activeSelection.start()
@@ -966,11 +926,7 @@ func runEditor() {
 
 			// Render the state.
 
-			wantPixelLen := canvasWidth * canvasHeight * 4
-			needToRecreatePixels := len(pixels) != wantPixelLen
-
-			if needToRecreatePixels {
-				pixels = make([]uint8, wantPixelLen)
+			if lastWindowW != windowW || lastWindowH != windowH {
 				render()
 			}
 
@@ -1014,25 +970,20 @@ func runEditor() {
 			}
 
 			if screenDirty {
+				startTime := time.Now() // TODO Remove timing when we are fast.
 				screenDirty = false
-
-				for i := range pixels {
-					pixels[i] = 0
-				}
-
-				img := &image.RGBA{
-					Pix:    pixels,
-					Stride: canvasWidth * 4,
-					Rect:   image.Rect(0, 0, canvasWidth, canvasHeight),
-				}
-
-				textRenderer.Dst = img
-				textRenderer.Src = image.NewUniform(color.White)
 
 				// We need to create the Gameboy screens for these frames:
 				// [leftMostFrame..lastVisibleFrame]
 				lastVisibleFrame := leftMostFrame + frameCountX*frameCountY - 1
+				// TODO Remember these until we change frames.
 				screens := emulateFrames(leftMostFrame, lastVisibleFrame)
+
+				// TODO Optimize this away.
+				screenPixels := make([]byte, ScreenWidth*ScreenHeight*4)
+				for i := 3; i < len(screenPixels); i += 4 {
+					screenPixels[i] = 255
+				}
 
 				frameIndex := leftMostFrame
 				for frameY := range frameCountY {
@@ -1041,16 +992,8 @@ func runEditor() {
 						screenOffsetY := frameY*frameHeight + 13
 						inputs := frameInputs[frameIndex]
 
-						// Render the frame border.
-						frameBounds := image.Rect(
-							frameX*frameWidth,
-							frameY*frameHeight,
-							(frameX+1)*frameWidth,
-							(frameY+1)*frameHeight,
-						)
-
 						// Determine color by button state for this frame.
-						borderColor := color.RGBA{0, 0, 0, 255}
+						borderColor := draw.RGBA(0, 0, 0, 1)
 
 						// Create a 4 bit value for the directional keys: DURL
 						// (down up right left).
@@ -1072,66 +1015,47 @@ func runEditor() {
 						// a real Gameboy, get a green tint between 100 and 200.
 						// Illegal combinations, like Left+Right, get 255 so
 						// they stand out as a very bright green.
-						borderColor.G = []byte{
-							0,   // durl
-							100, // durL
-							157, // duRl
-							255, // duRL
-							114, // dUrl
-							128, // dUrL
-							142, // dURl
-							255, // dURL
-							171, // Durl
-							200, // DurL
-							185, // DuRl
-							255, // DuRL
-							255, // DUrl
-							255, // DUrL
-							255, // DURl
-							255, // DURL
+						borderColor.G = []float32{
+							0,           // durl
+							100 / 255.0, // durL
+							157 / 255.0, // duRl
+							255 / 255.0, // duRL
+							114 / 255.0, // dUrl
+							128 / 255.0, // dUrL
+							142 / 255.0, // dURl
+							255 / 255.0, // dURL
+							171 / 255.0, // Durl
+							200 / 255.0, // DurL
+							185 / 255.0, // DuRl
+							255 / 255.0, // DuRL
+							255 / 255.0, // DUrl
+							255 / 255.0, // DUrL
+							255 / 255.0, // DURl
+							255 / 255.0, // DURL
 						}[directionalButtons]
 
 						if isButtonDown(inputs, ButtonA) ||
 							isButtonDown(inputs, ButtonStart) ||
 							isButtonDown(inputs, ButtonSelect) {
-							borderColor.B = 192
+							borderColor.B = 192 / 255.0
 						}
 
 						if isButtonDown(inputs, ButtonB) {
-							borderColor.R = 192
+							borderColor.R = 192 / 255.0
 						}
 
-						frameTop := image.Rect(
-							frameBounds.Min.X,
-							frameBounds.Min.Y,
-							frameBounds.Max.X,
-							frameBounds.Min.Y+fontHeight,
-						)
-						frameLeft := image.Rect(
-							frameBounds.Min.X,
-							frameTop.Max.Y,
-							frameBounds.Min.X+1,
-							frameBounds.Max.Y,
-						)
-						frameBottom := image.Rect(
-							frameBounds.Min.X+1,
-							frameTop.Max.Y,
-							frameBounds.Max.X-1,
-							frameBounds.Max.Y,
-						)
-						frameRight := image.Rect(
-							frameBounds.Max.X-1,
-							frameTop.Max.Y,
-							frameBounds.Max.X,
-							frameBounds.Max.Y,
-						)
-						border := image.NewUniform(borderColor)
-						draw.Draw(img, frameTop, border, image.Point{}, draw.Src)
-						draw.Draw(img, frameLeft, border, image.Point{}, draw.Src)
-						draw.Draw(img, frameBottom, border, image.Point{}, draw.Src)
-						draw.Draw(img, frameRight, border, image.Point{}, draw.Src)
+						// Color the frame border.
+						frameLeft := frameX * frameWidth
+						frameTop := frameY * frameHeight
+						window.FillRect(frameLeft, frameTop, frameWidth, fontHeight, borderColor)
+						window.FillRect(frameLeft, frameTop, 1, frameHeight, borderColor)
+						window.FillRect(frameLeft, frameTop+frameHeight-1, frameWidth, 1, borderColor)
+						window.FillRect(frameLeft+frameWidth-1, frameTop, 1, frameHeight, borderColor)
 
 						// Render the Gameboy screen.
+						window.CreateImage("gameboyScreen", ScreenWidth, ScreenHeight)
+
+						// TODO Overlay highlight on GPU.
 						isActiveFrame := activeSelection.start() <= frameIndex && frameIndex < activeSelection.end()
 						screenIndex := frameIndex - leftMostFrame
 						screen := screens[screenIndex]
@@ -1144,19 +1068,19 @@ func runEditor() {
 									c[1] = byte(min(255, int(c[1])+10))
 									c[2] = byte(min(255, int(c[2])+10))
 								}
-								destX := screenOffsetX + x
-								destY := screenOffsetY + y
-								dest := destX*4 + destY*canvasWidth*4
-								copy(pixels[dest:], c[:])
+								dest := 4 * (x + y*ScreenWidth)
+								copy(screenPixels[dest:], c[:])
 							}
 						}
 
+						window.SetImagePixels("gameboyScreen", screenPixels)
+						window.DrawImageFile("gameboyScreen", screenOffsetX, screenOffsetY)
+
 						// Render the text above the frame.
-						textY := screenOffsetY - 1
+						textY := frameY * frameHeight
 
 						topLeftText := strconv.Itoa(frameIndex)
-						textRenderer.Dot = fixed.P(screenOffsetX, textY)
-						textRenderer.DrawString(topLeftText)
+						window.DrawScaledText(topLeftText, screenOffsetX, textY, textScale, draw.White)
 						topLeftTextWidth := len(topLeftText) * charWidth
 
 						text := ""
@@ -1176,67 +1100,31 @@ func runEditor() {
 
 						textWidth := len(text) * charWidth
 						textX := screenOffsetX + (topLeftTextWidth+ScreenWidth-textWidth)/2
-						textRenderer.Dot = fixed.P(textX, textY)
-						textRenderer.DrawString(text)
+						window.DrawScaledText(text, textX, textY, textScale, draw.White)
 
 						frameIndex++
 					}
 				}
 
-				filledLeftPixels := frameCountX * frameWidth
-				filledTopPixels := frameCountY * frameHeight
-
-				rightEdge := image.Rect(filledLeftPixels, 0, canvasWidth, filledTopPixels)
-				bottomEdge := image.Rect(0, filledTopPixels, canvasWidth, canvasHeight)
-
-				background := image.NewUniform(color.Black)
-				draw.Draw(img, rightEdge, background, image.Point{}, draw.Src)
-				draw.Draw(img, bottomEdge, background, image.Point{}, draw.Src)
+				window.FillRect(frameCountX*frameWidth, 0, windowW, windowH, draw.Black)
+				window.FillRect(0, frameCountY*frameHeight, windowW, windowH, draw.Black)
 
 				if infoText != "" {
-					infoTextWidth := len(infoText) * charWidth
-					infoTextHeight := charHeight
-					infoTextRect := image.Rect(
-						canvasWidth-infoTextWidth-1,
-						canvasHeight-infoTextHeight-1,
-						canvasWidth,
-						canvasHeight,
-					)
-					draw.Draw(img, infoTextRect, background, image.Point{}, draw.Src)
-
-					textRenderer.Src = image.NewUniform(infoTextColor)
-					textRenderer.Dot = fixed.P(infoTextRect.Min.X+1, canvasHeight-fontDescend+1)
-					textRenderer.DrawString(infoText)
+					textW, textH := window.GetScaledTextSize(infoText, textScale)
+					textX := windowW - textW
+					textY := windowH - textH
+					window.FillRect(textX-1, textY-1, windowW, windowH, draw.Black)
+					window.DrawScaledText(infoText, textX, textY, textScale, infoTextColor)
 				}
 
-				pixels = invertY(pixels, canvasWidth, canvasHeight)
-
-				if len(pixels) > 0 {
-					canvas.SetPixels(pixels)
-				}
+				fmt.Println(time.Now().Sub(startTime))
 			}
 
 			controlWasDown = controlDown
-
-			win.Update()
 		}
-	}
-}
 
-func invertY(pixels []uint8, w, h int) []uint8 {
-	bytesPerLine := w * 4
-	swapBuffer := make([]uint8, bytesPerLine)
-
-	for y := range h / 2 {
-		topLine := pixels[y*bytesPerLine : (y+1)*bytesPerLine]
-		yBottom := h - 1 - y
-		bottomLine := pixels[yBottom*bytesPerLine : (yBottom+1)*bytesPerLine]
-		copy(swapBuffer, topLine)
-		copy(topLine, bottomLine)
-		copy(bottomLine, swapBuffer)
-	}
-
-	return pixels
+		lastWindowW, lastWindowH = windowW, windowH
+	}))
 }
 
 type inputState byte
@@ -1268,61 +1156,6 @@ func saveScreenshot(gameboy *Gameboy, path string) {
 	}
 
 	png.Encode(f, rgba)
-}
-
-func start() {
-	// Create the monitor for pixels
-	monitor := NewPixelsIOBinding(*vsyncOff || *unlocked)
-
-	// Load the rom from the flag argument, or prompt with file select
-	romFile := getROM()
-	rom, err := os.ReadFile(romFile)
-	check(err)
-
-	// If the CPU profile flag is set, then setup the profiling
-	if *cpuprofile != "" {
-		startCPUProfiling()
-		defer pprof.StopCPUProfile()
-	}
-
-	opts := GameboyOptions{
-		CGBMode: !*dmgMode,
-		Sound:   !*mute,
-	}
-
-	// Initialise the GameBoy with the flag options
-	gameboy := NewGameboy(rom, opts)
-	monitor.Gameboy = &gameboy
-	startGBLoop(&gameboy, monitor)
-}
-
-func startGBLoop(gameboy *Gameboy, monitor IOBinding) {
-	frameTime := time.Second / FramesSecond
-	if *unlocked {
-		frameTime = 1
-	}
-
-	ticker := time.NewTicker(frameTime)
-	start := time.Now()
-	frames := 0
-	for range ticker.C {
-		if !monitor.IsRunning() {
-			return
-		}
-
-		frames++
-
-		monitor.ProcessInput()
-		gameboy.Update()
-		monitor.RenderScreen()
-
-		since := time.Since(start)
-		if since > time.Second {
-			start = time.Now()
-			monitor.SetTitle(frames)
-			frames = 0
-		}
-	}
 }
 
 // frameSelection has the first and last selected frame indices where first was
@@ -1397,36 +1230,19 @@ func (c *frameCache) set(frameIndex int, gb Gameboy) {
 	}
 }
 
-// IOBinding provides an interface for display and input bindings.
-type IOBinding interface {
-	// Init the IOBinding
-	Init(disableVsync bool)
-	// RenderScreen renders a frame of the game.
-	RenderScreen()
-	// Destroy the IOBinding instance.
-	Destroy()
-	// ProcessInput processes input.
-	ProcessInput()
-	// SetTitle sets the title of the window.
-	SetTitle(fps int)
-	// IsRunning returns if the monitor is still running.
-	IsRunning() bool
-}
-
 // Determine the ROM location. If the string in the flag value is empty then it
 // should prompt the user to select a rom file using the OS dialog.
 func getROM() string {
 	rom := flag.Arg(0)
 	if rom == "" {
-		mainthread.Call(func() {
-			var err error
-			rom, err = dialog.File().
-				Filter("GameBoy ROM", "zip", "gb", "gbc", "bin").
-				Title("Load GameBoy ROM File").Load()
-			if err != nil {
-				os.Exit(1)
-			}
-		})
+		var err error
+		rom, err = dialog.File().
+			Title("Load GameBoy ROM File").
+			Filter("GameBoy ROM", "zip", "gb", "gbc", "bin").
+			Load()
+		if err != nil {
+			panic(err)
+		}
 	}
 	return rom
 }
@@ -1449,6 +1265,21 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+func round(x float64) int {
+	if x < 0 {
+		return int(x - 0.5)
+	}
+	return int(x + 0.5)
+}
+
+func toColor(rgb [3]byte) draw.Color {
+	return draw.RGB(
+		float32(rgb[0])/255,
+		float32(rgb[1])/255,
+		float32(rgb[2])/255,
+	)
 }
 
 func check(err error) {
