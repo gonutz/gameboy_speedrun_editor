@@ -286,6 +286,10 @@ func (mem *Memory) Read(gb *Gameboy, address uint16) byte {
 // ReadHighRam reads from 0xFF00-0xFFFF in the memory address space. The range
 // includes both HRAM and the hardware registers.
 func (mem *Memory) ReadHighRam(gb *Gameboy, address uint16) byte {
+	if address < 0xFF00 {
+		return mem.HighRAM[address-0xFF00]
+	}
+
 	switch {
 	// Joypad address
 	case address == 0xFF00:

@@ -8,7 +8,6 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -25,13 +24,21 @@ import (
 var (
 	mute       = flag.Bool("mute", false, "mute sound output")
 	dmgMode    = flag.Bool("dmg", false, "set to force dmg mode")
-	cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file (debugging)")
+	cpuprofile = flag.Bool("cpuprofile", false, "write cpu profile to file (debugging)")
 	vsyncOff   = flag.Bool("disableVsync", false, "set to disable vsync (debugging)")
 	unlocked   = flag.Bool("unlocked", false, "if to unlock the cpu speed (debugging)")
 )
 
 func main() {
 	flag.Parse()
+
+	if *cpuprofile {
+		path := time.Now().Format("profile_2006_01_02_15_04_05.prof")
+		f, err := os.Create(path)
+		check(err)
+		check(pprof.StartCPUProfile(f))
+		defer pprof.StopCPUProfile()
+	}
 
 	romFile := getROM()
 
@@ -933,6 +940,7 @@ func main() {
 			}
 
 			emulateFrames := func(startFrame, endFrame int) []gameboyScreen {
+				startTime := time.Now()
 				screenBuffer = screenBuffer[:0]
 
 				keyFrameIndex := startFrame / keyFrameInterval
@@ -968,6 +976,7 @@ func main() {
 					updateGameboy(&gb, currentFrame)
 				}
 
+				fmt.Println("emulation time", time.Now().Sub(startTime))
 				return screenBuffer
 			}
 
@@ -1136,7 +1145,7 @@ func main() {
 					window.DrawScaledText(infoText, textX, textY, textScale, infoTextColor)
 				}
 
-				fmt.Println(time.Now().Sub(startTime))
+				fmt.Println("   render time", time.Now().Sub(startTime))
 			}
 
 			controlWasDown = controlDown
@@ -1264,19 +1273,6 @@ func getROM() string {
 		}
 	}
 	return rom
-}
-
-// Start the CPU profile to a the file passed in from the flag.
-func startCPUProfiling() {
-	log.Print("Starting CPU profile...")
-	f, err := os.Create(*cpuprofile)
-	if err != nil {
-		log.Fatalf("Failed to create CPU profile: %v", err)
-	}
-	err = pprof.StartCPUProfile(f)
-	if err != nil {
-		log.Fatalf("Failed to start CPU profile: %v", err)
-	}
 }
 
 func abs(x int) int {

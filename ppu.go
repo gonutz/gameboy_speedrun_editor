@@ -1,10 +1,8 @@
 package main
 
 const (
-	// ScreenWidth is the number of pixels width on the GameBoy LCD panel.
-	ScreenWidth = 160
-
-	// ScreenHeight is the number of pixels height on the GameBoy LCD panel.
+	// ScreenWidth x ScreenHeight is the Gameboy screen size.
+	ScreenWidth  = 160
 	ScreenHeight = 144
 
 	// LCDC is the main LCD Control register.
@@ -322,7 +320,7 @@ func (gb *Gameboy) renderSprites(lcdControl byte, scanline int32) {
 		xFlip := BitIsSet(attributes, 5)
 		priority := !BitIsSet(attributes, 7)
 
-		// Bank the sprite data in is (CGB only)
+		// Bank the sprite data is in (CGB only)
 		var bank uint16 = 0
 		if gb.IsCGB() && BitIsSet(attributes, 3) {
 			bank = 1
@@ -389,7 +387,7 @@ func (gb *Gameboy) renderSprites(lcdControl byte, scanline int32) {
 }
 
 // Set a pixel in the graphics screen data.
-func (gb *Gameboy) setPixel(x byte, y byte, r uint8, g uint8, b uint8, priority bool) {
+func (gb *Gameboy) setPixel(x, y byte, r, g, b uint8, priority bool) {
 	// If priority is false then sprite pixel is only set if tile colour is 0
 	if (priority && !gb.BGPriority[x][y]) || gb.TileScanline[x] == 0 {
 		gb.ScreenData[x][y][0] = r
