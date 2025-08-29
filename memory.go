@@ -306,7 +306,6 @@ func (mem *Memory) ReadHighRam(gb *Gameboy, address uint16) byte {
 		return mem.HighRAM[0x0F] | 0xE0
 
 	case address >= 0xFF72 && address <= 0xFF77:
-		//log.Print("read from ", address)
 		return 0
 
 	case address == 0xFF68:

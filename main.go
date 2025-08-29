@@ -349,10 +349,10 @@ func main() {
 		unmuteSound()
 	}
 
+	// TODO Get rid of these.
 	const (
-		charWidth   = 7
-		charHeight  = 13
-		fontDescend = 3
+		charWidth  = 7
+		charHeight = 13
 	)
 
 	keyMap := map[draw.Key]Button{
@@ -375,6 +375,11 @@ func main() {
 		shiftDown := window.IsKeyDown(draw.KeyLeftShift) || window.IsKeyDown(draw.KeyRightShift)
 		controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
 		altDown := window.IsKeyDown(draw.KeyLeftAlt) || window.IsKeyDown(draw.KeyRightAlt)
+
+		leftClick := false
+		for _, c := range window.Clicks() {
+			leftClick = leftClick || c.Button == draw.LeftButton
+		}
 
 		toggleReplay := false
 		if window.WasKeyPressed(draw.KeyEscape) {
@@ -419,6 +424,8 @@ func main() {
 		}
 
 		if replayingGame {
+			currentReplayFrame := nextReplayFrame - 1
+
 			// Render the current screen.
 			window.CreateImage("gameboyScreen", ScreenWidth, ScreenHeight)
 			rgba := make([]byte, 4*ScreenWidth*ScreenHeight)
@@ -437,23 +444,256 @@ func main() {
 
 			window.FillRect(0, 0, windowW, windowH, toColor(ColorPalette[3]))
 
+			const inputMenuW = 200
+
 			// Letterbox the Gameboy screen into our window.
-			xScale := float64(windowW) / ScreenWidth
+			xScale := float64(windowW-inputMenuW) / ScreenWidth
 			yScale := float64(windowH) / ScreenHeight
 			scale := math.Min(yScale, xScale)
-			w := round(scale * ScreenWidth)
-			h := round(scale * ScreenHeight)
-			x := (windowW - w) / 2
-			y := (windowH - h) / 2
-			window.DrawImageFileTo("gameboyScreen", x, y, w, h, 0)
+			screenW := round(scale * ScreenWidth)
+			screenH := round(scale * ScreenHeight)
+			screenX := (windowW - inputMenuW - screenW) / 2
+			screenY := (windowH - screenH) / 2
+			window.DrawImageFileTo("gameboyScreen", screenX, screenY, screenW, screenH, 0)
+
+			// Draw the inputs as a menu.
+			inputs := frameInputs[currentReplayFrame]
+
+			aTextColor := draw.Gray
+			aBackColor := draw.DarkRed
+			if isButtonDown(inputs, ButtonA) {
+				aTextColor = draw.White
+				aBackColor = draw.Red
+			}
+
+			bTextColor := draw.Gray
+			bBackColor := draw.DarkRed
+			if isButtonDown(inputs, ButtonB) {
+				bTextColor = draw.White
+				bBackColor = draw.Red
+			}
+
+			inputMenuX := screenX + screenW
+			const aButtonSize = 75
+			const abButtonSpaceX = aButtonSize / 8
+			bButtonX := inputMenuX + (inputMenuW-(aButtonSize+abButtonSpaceX+aButtonSize))/2
+			aButtonX := bButtonX + aButtonSize + abButtonSpaceX
+			aButtonY := aButtonSize / 2
+			bButtonY := aButtonY + aButtonSize/2
+
+			window.FillRect(inputMenuX, 0, inputMenuW, windowH, rgb(224, 248, 208))
+
+			_, baseFontHeight := window.GetTextSize("|")
+
+			textScale := aButtonSize * 0.9 / float32(baseFontHeight)
+			aW, aH := window.GetScaledTextSize("A", textScale)
+
+			hoverColor := draw.RGBA(0, 0.5, 0, 0.3)
+
+			// Draw button B.
+			window.FillEllipse(bButtonX, bButtonY, aButtonSize, aButtonSize, bBackColor)
+			window.DrawScaledText(
+				"B",
+				bButtonX+(aButtonSize-aW)/2,
+				bButtonY+(aButtonSize-aH)/2,
+				textScale,
+				bTextColor,
+			)
+			const hoverMargin = 10
+			bCenterX := bButtonX + aButtonSize/2
+			bCenterY := bButtonY + aButtonSize/2
+			bButtonRadius := aButtonSize / 2
+			hoveringOverB := square(mouseX-bCenterX)+square(mouseY-bCenterY) <= square(bButtonRadius)
+			if hoveringOverB {
+				window.FillEllipse(
+					bButtonX-hoverMargin,
+					bButtonY-hoverMargin,
+					aButtonSize+2*hoverMargin,
+					aButtonSize+2*hoverMargin,
+					hoverColor,
+				)
+				if leftClick {
+					// TODO For all the visual button UI we have to re-generate
+					// the frames after we press a button.
+					toggleButton(&frameInputs[currentReplayFrame], ButtonB)
+				}
+			}
+
+			// Draw button A.
+			window.FillEllipse(aButtonX, aButtonY, aButtonSize, aButtonSize, aBackColor)
+			window.DrawScaledText(
+				"A",
+				aButtonX+(aButtonSize-aW)/2,
+				aButtonY+(aButtonSize-aH)/2,
+				textScale,
+				aTextColor,
+			)
+			aCenterX := aButtonX + aButtonSize/2
+			aCenterY := aButtonY + aButtonSize/2
+			aButtonRadius := aButtonSize / 2
+			hoveringOverA := square(mouseX-aCenterX)+square(mouseY-aCenterY) <= square(aButtonRadius)
+			if hoveringOverA {
+				window.FillEllipse(
+					aButtonX-hoverMargin,
+					aButtonY-hoverMargin,
+					aButtonSize+2*hoverMargin,
+					aButtonSize+2*hoverMargin,
+					hoverColor,
+				)
+				if leftClick {
+					toggleButton(&frameInputs[currentReplayFrame], ButtonA)
+				}
+			}
+
+			const dpadButtonSize = aButtonSize * 7 / 10
+			dpadX := inputMenuX + (inputMenuW-3*dpadButtonSize)/2
+			dpadY := bButtonY + aButtonSize + dpadButtonSize
+			window.FillRect(
+				dpadX+dpadButtonSize,
+				dpadY,
+				dpadButtonSize,
+				3*dpadButtonSize,
+				draw.Black,
+			)
+			window.FillRect(
+				dpadX,
+				dpadY+dpadButtonSize,
+				3*dpadButtonSize,
+				dpadButtonSize,
+				draw.Black,
+			)
+			drawPressedDPad := func(button Button, x, y int, text string) {
+				r := rect(x, y, dpadButtonSize, dpadButtonSize)
+				innerR := r.expand(-5)
+				outerR := r.expand(hoverMargin)
+
+				textColor := draw.White
+				if isButtonDown(inputs, button) {
+					innerR.fill(window, draw.LightGray)
+					textColor = draw.Black
+				}
+
+				textScale := 0.8 * dpadButtonSize / float32(baseFontHeight)
+				textW, textH := window.GetScaledTextSize(text, textScale)
+				textX := x + (dpadButtonSize-textW)/2
+				textY := y + (dpadButtonSize-textH)/2
+				window.DrawScaledText(text, textX, textY, textScale, textColor)
+
+				hoveringOverButton := rect(x, y, dpadButtonSize, dpadButtonSize).contains(mouseX, mouseY)
+				if hoveringOverButton {
+					outerR.fill(window, hoverColor)
+					if leftClick {
+						toggleButton(&frameInputs[currentReplayFrame], button)
+					}
+				}
+			}
+			drawPressedDPad(ButtonLeft, dpadX, dpadY+dpadButtonSize, "L")
+			drawPressedDPad(ButtonUp, dpadX+dpadButtonSize, dpadY, "U")
+			drawPressedDPad(ButtonRight, dpadX+2*dpadButtonSize, dpadY+dpadButtonSize, "R")
+			drawPressedDPad(ButtonDown, dpadX+dpadButtonSize, dpadY+2*dpadButtonSize, "D")
+
+			startBackColor := draw.Gray
+			startTextColor := draw.LightGray
+			selectBackColor := draw.Gray
+			selectTextColor := draw.LightGray
+			if isButtonDown(inputs, ButtonStart) {
+				startBackColor = draw.LightGray
+				startTextColor = draw.Black
+			}
+			if isButtonDown(inputs, ButtonSelect) {
+				selectBackColor = draw.LightGray
+				selectTextColor = draw.Black
+			}
+
+			const startButtonW = aButtonSize
+			const startButtonH = aButtonSize / 3
+			const startSelectButtonDistX = startButtonH / 2
+			selectButtonX := inputMenuX + (inputMenuW-2*startButtonW-startSelectButtonDistX)/2
+			startButtonX := selectButtonX + startButtonW + startSelectButtonDistX
+			startButtonY := dpadY + 4*dpadButtonSize
+			window.FillRect(
+				startButtonX+startButtonH/2,
+				startButtonY,
+				startButtonW-startButtonH,
+				startButtonH,
+				startBackColor,
+			)
+			window.FillEllipse(
+				startButtonX,
+				startButtonY,
+				startButtonH,
+				startButtonH,
+				startBackColor,
+			)
+			window.FillEllipse(
+				startButtonX+startButtonW-startButtonH,
+				startButtonY,
+				startButtonH,
+				startButtonH,
+				startBackColor,
+			)
+			startTextScale := 0.8 * float32(startButtonH) / float32(baseFontHeight)
+			startTextW, startTextH := window.GetScaledTextSize("Start", startTextScale)
+			window.DrawScaledText(
+				"Start",
+				startButtonX+(startButtonW-startTextW)/2,
+				startButtonY+(startButtonH-startTextH)/2,
+				startTextScale,
+				startTextColor,
+			)
+			startButtonRect := rect(startButtonX, startButtonY, startButtonW, startButtonH)
+			if startButtonRect.contains(mouseX, mouseY) {
+				startButtonRect.expand(10).fill(window, hoverColor)
+				if leftClick {
+					toggleButton(&frameInputs[currentReplayFrame], ButtonStart)
+				}
+			}
+
+			window.FillRect(
+				selectButtonX+startButtonH/2,
+				startButtonY,
+				startButtonW-startButtonH,
+				startButtonH,
+				selectBackColor,
+			)
+			window.FillEllipse(
+				selectButtonX,
+				startButtonY,
+				startButtonH,
+				startButtonH,
+				selectBackColor,
+			)
+			window.FillEllipse(
+				selectButtonX+startButtonW-startButtonH,
+				startButtonY,
+				startButtonH,
+				startButtonH,
+				selectBackColor,
+			)
+			selectTextScale := 0.8 * float32(startButtonH) / float32(baseFontHeight)
+			selectW, selectH := window.GetScaledTextSize("sElect", selectTextScale)
+			window.DrawScaledText(
+				"sElect",
+				selectButtonX+(startButtonW-selectW)/2,
+				startButtonY+(startButtonH-selectH)/2,
+				selectTextScale,
+				selectTextColor,
+			)
+			selectButtonRect := rect(selectButtonX, startButtonY, startButtonW, startButtonH)
+			if selectButtonRect.contains(mouseX, mouseY) {
+				selectButtonRect.expand(10).fill(window, hoverColor)
+				if leftClick {
+					toggleButton(&frameInputs[currentReplayFrame], ButtonSelect)
+				}
+			}
 
 			// Let the user toggle buttons for the current frame.
 			for key, b := range keyMap {
 				if window.WasKeyPressed(key) {
-					down := isButtonDown(frameInputs[nextReplayFrame], b)
-					setButtonDown(&frameInputs[nextReplayFrame], b, !down)
+					down := isButtonDown(frameInputs[currentReplayFrame], b)
+					setButtonDown(&frameInputs[currentReplayFrame], b, !down)
 					frameCache.clear()
-					emulateFromIndex = nextReplayFrame
+					emulateFromIndex = currentReplayFrame
 				}
 			}
 
@@ -764,11 +1004,6 @@ func main() {
 			if 0 <= frameX && frameX < frameCountX &&
 				0 <= frameY && frameY < frameCountY {
 				frameUnderMouse = leftMostFrame + frameY*frameCountX + frameX
-			}
-
-			leftClick := false
-			for _, c := range window.Clicks() {
-				leftClick = leftClick || c.Button == draw.LeftButton
 			}
 
 			if leftClick {
@@ -1169,6 +1404,10 @@ func setButtonDown(s *inputState, b Button, down bool) {
 	}
 }
 
+func toggleButton(s *inputState, b Button) {
+	setButtonDown(s, b, !isButtonDown(*s, b))
+}
+
 func saveScreenshot(gameboy *Gameboy, path string) {
 	f, err := os.Create(path)
 	check(err)
@@ -1295,6 +1534,53 @@ func toColor(rgb [3]byte) draw.Color {
 		float32(rgb[1])/255,
 		float32(rgb[2])/255,
 	)
+}
+
+func rgb(r, g, b byte) draw.Color {
+	return draw.RGB(
+		float32(r)/255,
+		float32(g)/255,
+		float32(b)/255,
+	)
+}
+
+func square(x int) int {
+	return x * x
+}
+
+type rectangle struct {
+	x, y, w, h int
+}
+
+func rect(x, y, w, h int) rectangle {
+	return rectangle{
+		x: x,
+		y: y,
+		w: w,
+		h: h,
+	}
+}
+
+func (r rectangle) contains(x, y int) bool {
+	return r.x <= x && x < r.x+r.w &&
+		r.y <= y && y < r.y+r.h
+}
+
+func (r rectangle) expand(by int) rectangle {
+	return r.expandXY(by, by)
+}
+
+func (r rectangle) expandXY(byX, byY int) rectangle {
+	return rectangle{
+		x: r.x - byX,
+		y: r.y - byY,
+		w: r.w + 2*byX,
+		h: r.h + 2*byY,
+	}
+}
+
+func (r rectangle) fill(window draw.Window, color draw.Color) {
+	window.FillRect(r.x, r.y, r.w, r.h, color)
 }
 
 func check(err error) {
