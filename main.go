@@ -1361,6 +1361,11 @@ func (s *editorState) loadLastSpeedrun() {
 		return
 	}
 
+	// TODO Set
+	// keyFrameStatesTemp = nil
+	// in case the Gameboy emulation code has changed and the states will differ
+	// from what was stored on disk.
+
 	s.leftMostFrame = leftMostFrameTemp
 	s.activeSelection.first = activeSelectionFirstTemp
 	s.activeSelection.last = activeSelectionLastTemp

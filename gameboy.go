@@ -300,8 +300,12 @@ func (gb *Gameboy) setup() {
 // PressButton notifies the GameBoy that a button has just been pressed
 // and requests a joypad interrupt.
 func (gb *Gameboy) PressButton(button Button) {
+	// We only request the interrupt if the button bit changes from high to low.
+	oldMask := gb.InputMask
 	gb.InputMask = ResetBit(gb.InputMask, byte(button))
-	gb.requestInterrupt(4)
+	if gb.InputMask != oldMask {
+		gb.requestInterrupt(4)
+	}
 }
 
 // ReleaseButton notifies the GameBoy that a button has just been released.
