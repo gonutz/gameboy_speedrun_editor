@@ -26,6 +26,9 @@ const (
 	mbc5
 )
 
+// globalROM is the cartridge data. It is read-only and never changes throughout
+// the run of the Gameboy game. Thus we do not make it part of the Gameboy
+// state. Instead we use this global variable throughout the program.
 var globalROM []byte
 
 // Cart represents a GameBoy cartridge.

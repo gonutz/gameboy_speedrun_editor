@@ -11,6 +11,18 @@ const (
 	CyclesPerFrame = ClockSpeed / FramesSecond
 )
 
+// NewGameboy returns a new Gameboy instance.
+func NewGameboy(rom []byte, opts GameboyOptions) Gameboy {
+	gameboy := Gameboy{Options: opts}
+	gameboy.init(rom)
+	return gameboy
+}
+
+type GameboyOptions struct {
+	Sound   bool
+	CGBMode bool
+}
+
 // Gameboy is the master struct which contains all of the sub components
 // for running the Gameboy emulator.
 type Gameboy struct {
@@ -285,14 +297,30 @@ func (gb *Gameboy) setup() {
 	}
 }
 
-type GameboyOptions struct {
-	Sound   bool
-	CGBMode bool
+// PressButton notifies the GameBoy that a button has just been pressed
+// and requests a joypad interrupt.
+func (gb *Gameboy) PressButton(button Button) {
+	gb.InputMask = ResetBit(gb.InputMask, byte(button))
+	gb.requestInterrupt(4)
 }
 
-// NewGameboy returns a new Gameboy instance.
-func NewGameboy(rom []byte, opts GameboyOptions) Gameboy {
-	gameboy := Gameboy{Options: opts}
-	gameboy.init(rom)
-	return gameboy
+// ReleaseButton notifies the GameBoy that a button has just been released.
+func (gb *Gameboy) ReleaseButton(button Button) {
+	gb.InputMask = SetBit(gb.InputMask, byte(button))
 }
+
+// Button represents the button on a GameBoy.
+type Button byte
+
+const (
+	ButtonA Button = iota
+	ButtonB
+	ButtonSelect
+	ButtonStart
+	ButtonRight
+	ButtonLeft
+	ButtonUp
+	ButtonDown
+
+	buttonCount // NOTE This has to come last.
+)
