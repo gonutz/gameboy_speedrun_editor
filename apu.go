@@ -2,7 +2,6 @@ package main
 
 import (
 	"math"
-	"math/rand"
 	"time"
 
 	"github.com/hajimehoshi/oto"
@@ -318,10 +317,17 @@ const (
 )
 
 type WaveGenerator struct {
-	Type WaveGeneratorType
-	Mod  float64
-	Last float64
-	Val  byte
+	Type      WaveGeneratorType
+	Mod       float64
+	Last      float64
+	Val       byte
+	RandState uint32
+}
+
+func (g *WaveGenerator) randBit() byte {
+	g.RandState = 1103515245*g.RandState + 12345
+	mixed := g.RandState ^ (g.RandState >> 13)
+	return byte(mixed) & 1
 }
 
 func (g *WaveGenerator) At(apu *APU, t float64) byte {
@@ -334,7 +340,7 @@ func (g *WaveGenerator) At(apu *APU, t float64) byte {
 	case noiseWave:
 		if t-g.Last > twoPi {
 			g.Last = t
-			g.Val = byte(rand.Intn(2)) * 0xFF
+			g.Val = g.randBit() * 0xFF
 		}
 		return g.Val
 	case ramWave:

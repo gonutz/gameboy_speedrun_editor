@@ -298,7 +298,10 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	window.DrawImageFileTo("gameboyScreen", screenX, screenY, screenW, screenH, 0)
 
 	// Draw the inputs as a menu.
-	inputs := state.frameInputs[currentReplayFrame]
+	inputs := state.defaultInputs
+	if currentReplayFrame < len(state.frameInputs) {
+		inputs = state.frameInputs[currentReplayFrame]
+	}
 
 	aTextColor := draw.Gray
 	aBackColor := draw.DarkRed
@@ -1347,24 +1350,26 @@ func (s *editorState) loadLastSpeedrun() {
 	for i := range frameInputsTemp {
 		frameInputsTemp[i] = inputState(b())
 	}
-	if keyFrameInterval != n() {
-		// We currently do not support different key frame intervals.
-		loadFailed = true
-	}
-	keyFrameStatesTemp := make([]Gameboy, n())
-	for i := range keyFrameStatesTemp {
-		v(&keyFrameStatesTemp[i])
+
+	haveKeyFrameInterval := n()
+	haveGameboyStateVersion := n()
+	var keyFrameStatesTemp []Gameboy
+	if haveKeyFrameInterval == keyFrameInterval &&
+		haveGameboyStateVersion == gameboyStateVersion {
+		// The binary Gameboy state on disk might be old. We might have changed
+		// the Gameboy struct. After a change we will have incremented
+		// gameboyStateVersion so in that case we do NOT read the key frames
+		// from disk. In that case we need to re-generate them.
+		keyFrameStatesTemp = make([]Gameboy, n())
+		for i := range keyFrameStatesTemp {
+			v(&keyFrameStatesTemp[i])
+		}
 	}
 
 	if loadFailed {
 		fmt.Println("loading failed")
 		return
 	}
-
-	// TODO Set
-	// keyFrameStatesTemp = nil
-	// in case the Gameboy emulation code has changed and the states will differ
-	// from what was stored on disk.
 
 	s.leftMostFrame = leftMostFrameTemp
 	s.activeSelection.first = activeSelectionFirstTemp
@@ -1408,6 +1413,7 @@ func (s *editorState) saveCurrentSpeedrun() {
 		b(byte(inputs))
 	}
 	n(keyFrameInterval)
+	n(gameboyStateVersion)
 	n(len(s.keyFrameStates))
 	for _, s := range s.keyFrameStates {
 		v(s)

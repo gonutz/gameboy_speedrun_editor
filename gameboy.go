@@ -23,6 +23,12 @@ type GameboyOptions struct {
 	CGBMode bool
 }
 
+// gameboyStateVersion needs to be incremented whenever changes are made to the
+// Gameboy struct. This struct is saved to disk. Changes that make the emulator
+// behave differently mean that we need to re-generate keyframes the next time
+// we load a file. For this reason the file versions are compared.
+const gameboyStateVersion = 2
+
 // Gameboy is the master struct which contains all of the sub components
 // for running the Gameboy emulator.
 type Gameboy struct {
