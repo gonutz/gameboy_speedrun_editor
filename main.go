@@ -91,8 +91,12 @@ func main() {
 			// the pause state because that button is still down.
 			state.replayPaused = !state.lastReplayPaused
 
+			// TODO Do not clear the cache outside of setDirtyFrame any longer.
+			// Once we go through generateFrame and setDirtyFrame for the editor
+			// as well, we can remove this line.
 			state.frameCache.clear()
-			state.initReplayFrame(state.leftMostFrame)
+
+			state.lastReplayedFrame = state.leftMostFrame
 			state.render()
 		}
 
@@ -120,12 +124,14 @@ type editorState struct {
 	activeSelection frameSelection
 	frameInputs     []inputState // Holds the state of all the Gameboy buttons for each frame.
 	defaultInputs   inputState   // Button states for future frames that are not yet generated.
-	keyFrameStates  []Gameboy
+	// keyFrameStates are the states at every keyFrameInterval-th frame. The
+	// very first item in keyFrameStates is for frame 0.
+	keyFrameStates []Gameboy
 
 	// dirtyFrameIndex is the first frame that needs to be emulated again
 	// because its state has changed. All frames after this (and including it)
 	// need to be emulated again.
-	dirtyFrameIndex     int
+	dirtyFrameIndex     int // TODO Remove this.
 	frameCache          *frameCache
 	gameboyScreenBuffer []byte
 	// We generate Gameboy screens to be display in our editor.
@@ -151,11 +157,10 @@ type editorState struct {
 	// We can toggle between the editor which freezes time and shows multiple
 	// frames at once and running the emulator which replays the game in
 	// real-time using our edited inputs.
-	replayingGame    bool
-	replayPaused     bool
-	lastReplayPaused bool
-	nextReplayFrame  int
-	emulatorGameboy  Gameboy
+	replayingGame     bool
+	replayPaused      bool
+	lastReplayPaused  bool
+	lastReplayedFrame int
 
 	infoText      string
 	infoTextColor draw.Color
@@ -228,27 +233,90 @@ func (s *editorState) createKeyFramesUpTo(keyFrameIndex int) {
 	}
 }
 
-func (s *editorState) initReplayFrame(frameIndex int) {
-	frameIndex = max(0, frameIndex)
-
+func (s *editorState) generateFrame(frameIndex int) Gameboy {
 	if s.frameCache.contains(frameIndex) {
-		s.emulatorGameboy = s.frameCache.at(frameIndex)
-	} else {
-		keyFrameIndex := frameIndex / keyFrameInterval
-		s.createKeyFramesUpTo(keyFrameIndex)
-		s.emulatorGameboy = s.keyFrameStates[keyFrameIndex]
+		return s.frameCache.at(frameIndex)
+	}
 
-		currentFrame := keyFrameIndex * keyFrameInterval
-		for currentFrame < frameIndex {
-			currentFrame++
-			s.updateGameboy(&s.emulatorGameboy, currentFrame)
-			s.frameCache.set(currentFrame, s.emulatorGameboy)
+	if s.frameCache.contains(frameIndex - 1) {
+		gb := s.frameCache.at(frameIndex - 1)
+		s.updateGameboy(&gb, frameIndex)
+
+		s.frameCache.set(frameIndex, gb)
+
+		if frameIndex%keyFrameInterval == 0 &&
+			(frameIndex/keyFrameInterval) == len(s.keyFrameStates) {
+			s.keyFrameStates = append(s.keyFrameStates, gb)
+		}
+
+		return gb
+	}
+
+	// Go from the latest key frame before this frame.
+	keyFrameIndex := frameIndex / keyFrameInterval
+
+	// Create as many key frames as we need.
+	for keyFrameIndex >= len(s.keyFrameStates) {
+		last := len(s.keyFrameStates) - 1
+
+		if last == -1 {
+			gb := NewGameboy(globalROM, GameboyOptions{})
+			s.updateGameboy(&gb, 0)
+			s.keyFrameStates = append(s.keyFrameStates, gb)
+		} else {
+			gb := s.keyFrameStates[last]
+			for i := range keyFrameInterval {
+				s.updateGameboy(&gb, last*keyFrameInterval+i+1)
+			}
+			s.keyFrameStates = append(s.keyFrameStates, gb)
 		}
 	}
 
-	s.emulatorGameboy.Sound.Init(!*mute)
-	s.nextReplayFrame = frameIndex + 1
-	unmuteSound()
+	// Now the key frame we need exists. We start from there, create frames up
+	// to where we want to go, while putting those frames in the cache as well.
+	gb := s.keyFrameStates[keyFrameIndex]
+
+	// Emulate frames until we reach our destination.
+	currentIndex := keyFrameIndex * keyFrameInterval
+	for currentIndex < frameIndex {
+		s.updateGameboy(&gb, currentIndex+1)
+		currentIndex++
+		s.frameCache.set(currentIndex, gb)
+	}
+
+	return gb
+}
+
+func (s *editorState) setDirtyFrame(frameIndex int) {
+	// We can only keep past key frames that are not dirty:
+	//
+	// frame index | number of key frames to keep
+	// ------------+-----------------------------
+	//           0 | 0 (key frame 0 is the first ever frame, so if it changes, delete all key frames)
+	//           1 | 1 (changing frame 1 leaves frame 0 (the very first key frame) intact)
+	//         ... | 1
+	//         100 | 1 (changing frame 100 leaves frames 0..99 intact - keep key frame 0)
+	//         101 | 2 (changing frame 101 leaves frames 0..100 inteact - keep key frames 0 and 1)
+	//         ... | 2
+	//         200 | 2
+	//         201 | 3
+	//
+	keep := (frameIndex + keyFrameInterval - 1) / keyFrameInterval
+	s.keyFrameStates = s.keyFrameStates[:keep]
+
+	s.frameCache.removeFramesStartingAt(frameIndex)
+}
+
+// TODO Possible optimization: give toggleButton a range instead of a single
+// frame to not have to call setDirtyFrame all the time. This will be useful for
+// the editor, where we change buttons on multiple frames at once.
+func (state *editorState) toggleButton(frameIndex int, button Button) {
+	for frameIndex >= len(state.frameInputs) {
+		state.frameInputs = append(state.frameInputs, state.defaultInputs)
+	}
+
+	toggleButton(&state.frameInputs[frameIndex], button)
+	state.setDirtyFrame(frameIndex)
 }
 
 func (state *editorState) executeReplayFrame(window draw.Window) {
@@ -265,15 +333,68 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 		}
 	}
 
-	currentReplayFrame := state.nextReplayFrame - 1
+	// Let the user toggle buttons for the current frame.
+	for key, b := range keyMap {
+		if window.WasKeyPressed(key) {
+			state.toggleButton(state.lastReplayedFrame, b)
+		}
+	}
+
+	// When replay is paused, we use a key repeat counter to skip through single
+	// frames in stop-motion.
+	// While replaying (non-paused) simply holding down a key will change the
+	// speed.
+	state.keyRepeatCountdown--
+	keyTriggered := func(key draw.Key) bool {
+		if state.replayPaused {
+			if window.WasKeyPressed(key) ||
+				window.IsKeyDown(key) && state.keyRepeatCountdown <= 0 {
+				state.keyRepeatCountdown = 10
+				return true
+			}
+			return false
+		} else {
+			return window.IsKeyDown(key)
+		}
+	}
+
+	// Handle keys to accelerate/decelerate the playback.
+	nextFrameIndex := state.lastReplayedFrame + 1
+
+	if state.replayPaused {
+		nextFrameIndex = state.lastReplayedFrame
+	}
+
+	if window.WasKeyPressed(draw.KeyHome) {
+		nextFrameIndex = 0
+	} else if keyTriggered(draw.KeyLeft) {
+		nextFrameIndex = max(0, state.lastReplayedFrame-1)
+	} else if keyTriggered(draw.KeyUp) {
+		nextFrameIndex = max(0, state.lastReplayedFrame-5)
+	} else if keyTriggered(draw.KeyPageUp) {
+		nextFrameIndex = max(0, state.lastReplayedFrame-20)
+	} else if keyTriggered(draw.KeyRight) {
+		if state.replayPaused {
+			nextFrameIndex = state.lastReplayedFrame + 1
+		} else {
+			nextFrameIndex = state.lastReplayedFrame + 2
+		}
+	} else if keyTriggered(draw.KeyDown) {
+		nextFrameIndex = state.lastReplayedFrame + 5
+	} else if keyTriggered(draw.KeyPageDown) {
+		nextFrameIndex = state.lastReplayedFrame + 20
+	}
+
+	gb := state.generateFrame(nextFrameIndex)
+	state.lastReplayedFrame = nextFrameIndex
 
 	// Render the current screen.
 	window.CreateImage("gameboyScreen", ScreenWidth, ScreenHeight)
-	rgba := make([]byte, 4*ScreenWidth*ScreenHeight)
+	rgba := make([]byte, 4*ScreenWidth*ScreenHeight) // TODO Cache this.
 	i := 0
 	for y := range ScreenHeight {
 		for x := range ScreenWidth {
-			color := state.emulatorGameboy.PreparedData[x][y]
+			color := gb.PreparedData[x][y]
 			rgba[i+0] = color[0]
 			rgba[i+1] = color[1]
 			rgba[i+2] = color[2]
@@ -285,113 +406,89 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 
 	window.FillRect(0, 0, windowW, windowH, toColor(ColorPalette[3]))
 
-	const inputMenuW = 200
+	const (
+		inputMenuW      = 200
+		inputMenuMargin = 20
+	)
 
 	// Letterbox the Gameboy screen into our window.
-	xScale := float64(windowW-inputMenuW) / ScreenWidth
+	xScale := float64(windowW-inputMenuW-inputMenuMargin) / ScreenWidth
 	yScale := float64(windowH) / ScreenHeight
 	scale := math.Min(yScale, xScale)
 	screenW := round(scale * ScreenWidth)
 	screenH := round(scale * ScreenHeight)
-	screenX := (windowW - inputMenuW - screenW) / 2
+	screenX := (windowW - inputMenuW - inputMenuMargin - screenW) / 2
 	screenY := (windowH - screenH) / 2
 	window.DrawImageFileTo("gameboyScreen", screenX, screenY, screenW, screenH, 0)
 
 	// Draw the inputs as a menu.
 	inputs := state.defaultInputs
-	if currentReplayFrame < len(state.frameInputs) {
-		inputs = state.frameInputs[currentReplayFrame]
+	if state.lastReplayedFrame < len(state.frameInputs) {
+		inputs = state.frameInputs[state.lastReplayedFrame]
 	}
 
-	aTextColor := draw.Gray
-	aBackColor := draw.DarkRed
-	if isButtonDown(inputs, ButtonA) {
-		aTextColor = draw.White
-		aBackColor = draw.Red
-	}
-
-	bTextColor := draw.Gray
-	bBackColor := draw.DarkRed
-	if isButtonDown(inputs, ButtonB) {
-		bTextColor = draw.White
-		bBackColor = draw.Red
-	}
-
-	inputMenuX := screenX + screenW
-	const aButtonSize = 75
-	const abButtonSpaceX = aButtonSize / 8
-	bButtonX := inputMenuX + (inputMenuW-(aButtonSize+abButtonSpaceX+aButtonSize))/2
-	aButtonX := bButtonX + aButtonSize + abButtonSpaceX
-	aButtonY := aButtonSize / 2
-	bButtonY := aButtonY + aButtonSize/2
-
-	window.FillRect(inputMenuX, 0, inputMenuW, windowH, rgb(224, 248, 208))
+	const (
+		abButtonSize   = 75
+		abButtonSpaceX = abButtonSize / 8
+		hoverMargin    = 10
+	)
 
 	_, baseFontHeight := window.GetTextSize("|")
-
-	textScale := aButtonSize * 0.9 / float32(baseFontHeight)
-	aW, aH := window.GetScaledTextSize("A", textScale)
-
 	hoverColor := draw.RGBA(0, 0.5, 0, 0.3)
 
-	// Draw button B.
-	window.FillEllipse(bButtonX, bButtonY, aButtonSize, aButtonSize, bBackColor)
-	window.DrawScaledText(
-		"B",
-		bButtonX+(aButtonSize-aW)/2,
-		bButtonY+(aButtonSize-aH)/2,
-		textScale,
-		bTextColor,
-	)
-	const hoverMargin = 10
-	bCenterX := bButtonX + aButtonSize/2
-	bCenterY := bButtonY + aButtonSize/2
-	bButtonRadius := aButtonSize / 2
-	hoveringOverB := square(mouseX-bCenterX)+square(mouseY-bCenterY) <= square(bButtonRadius)
-	if hoveringOverB {
-		window.FillEllipse(
-			bButtonX-hoverMargin,
-			bButtonY-hoverMargin,
-			aButtonSize+2*hoverMargin,
-			aButtonSize+2*hoverMargin,
-			hoverColor,
+	// Clear the menu background.
+	inputMenuX := screenX + screenW + inputMenuMargin
+	window.FillRect(inputMenuX, 0, inputMenuW, windowH, rgb(224, 248, 208))
+
+	drawAB := func(r rectangle, text string, button Button) {
+		textColor := draw.Gray
+		backColor := draw.DarkRed
+		if isButtonDown(inputs, button) {
+			textColor = draw.White
+			backColor = draw.Red
+		}
+
+		textScale := abButtonSize * 0.9 / float32(baseFontHeight)
+		textW, textH := window.GetScaledTextSize(text, textScale)
+
+		r.fillEllipse(window, backColor)
+		window.DrawScaledText(
+			text,
+			r.x+(r.w-textW)/2,
+			r.y+(r.h-textH)/2,
+			textScale,
+			textColor,
 		)
-		if leftClick {
-			// TODO For all the visual button UI we have to re-generate
-			// the frames after we press a button.
-			toggleButton(&state.frameInputs[currentReplayFrame], ButtonB)
+		centerX := r.x + abButtonSize/2
+		centerY := r.y + abButtonSize/2
+		radius := abButtonSize / 2
+		hovering := square(mouseX-centerX)+square(mouseY-centerY) <= square(radius)
+		if hovering {
+			window.FillEllipse(
+				r.x-hoverMargin,
+				r.y-hoverMargin,
+				r.w+2*hoverMargin,
+				r.h+2*hoverMargin,
+				hoverColor,
+			)
+			if leftClick {
+				state.toggleButton(state.lastReplayedFrame, button)
+			}
 		}
 	}
 
-	// Draw button A.
-	window.FillEllipse(aButtonX, aButtonY, aButtonSize, aButtonSize, aBackColor)
-	window.DrawScaledText(
-		"A",
-		aButtonX+(aButtonSize-aW)/2,
-		aButtonY+(aButtonSize-aH)/2,
-		textScale,
-		aTextColor,
-	)
-	aCenterX := aButtonX + aButtonSize/2
-	aCenterY := aButtonY + aButtonSize/2
-	aButtonRadius := aButtonSize / 2
-	hoveringOverA := square(mouseX-aCenterX)+square(mouseY-aCenterY) <= square(aButtonRadius)
-	if hoveringOverA {
-		window.FillEllipse(
-			aButtonX-hoverMargin,
-			aButtonY-hoverMargin,
-			aButtonSize+2*hoverMargin,
-			aButtonSize+2*hoverMargin,
-			hoverColor,
-		)
-		if leftClick {
-			toggleButton(&state.frameInputs[currentReplayFrame], ButtonA)
-		}
-	}
+	bButtonX := inputMenuX + (inputMenuW-(abButtonSize+abButtonSpaceX+abButtonSize))/2
+	aButtonX := bButtonX + abButtonSize + abButtonSpaceX
+	aButtonY := abButtonSize / 2
+	bButtonY := aButtonY + abButtonSize/2
 
-	const dpadButtonSize = aButtonSize * 7 / 10
+	drawAB(rect(aButtonX, aButtonY, abButtonSize, abButtonSize), "A", ButtonA)
+	drawAB(rect(bButtonX, bButtonY, abButtonSize, abButtonSize), "B", ButtonB)
+
+	// Draw the D-Pad.
+	const dpadButtonSize = abButtonSize * 7 / 10
 	dpadX := inputMenuX + (inputMenuW-3*dpadButtonSize)/2
-	dpadY := bButtonY + aButtonSize + dpadButtonSize
+	dpadY := bButtonY + abButtonSize + dpadButtonSize
 	window.FillRect(
 		dpadX+dpadButtonSize,
 		dpadY,
@@ -427,7 +524,7 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 		if hoveringOverButton {
 			outerR.fill(window, hoverColor)
 			if leftClick {
-				toggleButton(&state.frameInputs[currentReplayFrame], button)
+				state.toggleButton(state.lastReplayedFrame, button)
 			}
 		}
 	}
@@ -436,157 +533,50 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	drawPressedDPad(ButtonRight, dpadX+2*dpadButtonSize, dpadY+dpadButtonSize, "R")
 	drawPressedDPad(ButtonDown, dpadX+dpadButtonSize, dpadY+2*dpadButtonSize, "D")
 
-	startBackColor := draw.Gray
-	startTextColor := draw.LightGray
-	selectBackColor := draw.Gray
-	selectTextColor := draw.LightGray
-	if isButtonDown(inputs, ButtonStart) {
-		startBackColor = draw.LightGray
-		startTextColor = draw.Black
-	}
-	if isButtonDown(inputs, ButtonSelect) {
-		selectBackColor = draw.LightGray
-		selectTextColor = draw.Black
+	// Draw Start and Select buttons.
+	drawStartSelect := func(r rectangle, text string, button Button) {
+		backColor := draw.Gray
+		textColor := draw.LightGray
+		if isButtonDown(inputs, button) {
+			backColor = draw.LightGray
+			textColor = draw.Black
+		}
+
+		window.FillRect(r.x+r.h/2, r.y, r.w-r.h, r.h, backColor)
+		window.FillEllipse(r.x, r.y, r.h, r.h, backColor)
+		window.FillEllipse(r.x+r.w-r.h, r.y, r.h, r.h, backColor)
+
+		textScale := 0.8 * float32(r.h) / float32(baseFontHeight)
+		textW, textH := window.GetScaledTextSize(text, textScale)
+		window.DrawScaledText(
+			text,
+			r.x+(r.w-textW)/2,
+			r.y+(r.h-textH)/2,
+			textScale,
+			textColor,
+		)
+
+		if r.contains(mouseX, mouseY) {
+			r.expand(10).fill(window, hoverColor)
+			if leftClick {
+				state.toggleButton(state.lastReplayedFrame, button)
+			}
+		}
 	}
 
-	const startButtonW = aButtonSize
-	const startButtonH = aButtonSize / 3
-	const startSelectButtonDistX = startButtonH / 2
+	const (
+		startButtonW           = abButtonSize
+		startButtonH           = abButtonSize / 3
+		startSelectButtonDistX = startButtonH / 2
+	)
 	selectButtonX := inputMenuX + (inputMenuW-2*startButtonW-startSelectButtonDistX)/2
 	startButtonX := selectButtonX + startButtonW + startSelectButtonDistX
 	startButtonY := dpadY + 4*dpadButtonSize
-	window.FillRect(
-		startButtonX+startButtonH/2,
-		startButtonY,
-		startButtonW-startButtonH,
-		startButtonH,
-		startBackColor,
-	)
-	window.FillEllipse(
-		startButtonX,
-		startButtonY,
-		startButtonH,
-		startButtonH,
-		startBackColor,
-	)
-	window.FillEllipse(
-		startButtonX+startButtonW-startButtonH,
-		startButtonY,
-		startButtonH,
-		startButtonH,
-		startBackColor,
-	)
-	startTextScale := 0.8 * float32(startButtonH) / float32(baseFontHeight)
-	startTextW, startTextH := window.GetScaledTextSize("Start", startTextScale)
-	window.DrawScaledText(
-		"Start",
-		startButtonX+(startButtonW-startTextW)/2,
-		startButtonY+(startButtonH-startTextH)/2,
-		startTextScale,
-		startTextColor,
-	)
 	startButtonRect := rect(startButtonX, startButtonY, startButtonW, startButtonH)
-	if startButtonRect.contains(mouseX, mouseY) {
-		startButtonRect.expand(10).fill(window, hoverColor)
-		if leftClick {
-			toggleButton(&state.frameInputs[currentReplayFrame], ButtonStart)
-		}
-	}
-
-	window.FillRect(
-		selectButtonX+startButtonH/2,
-		startButtonY,
-		startButtonW-startButtonH,
-		startButtonH,
-		selectBackColor,
-	)
-	window.FillEllipse(
-		selectButtonX,
-		startButtonY,
-		startButtonH,
-		startButtonH,
-		selectBackColor,
-	)
-	window.FillEllipse(
-		selectButtonX+startButtonW-startButtonH,
-		startButtonY,
-		startButtonH,
-		startButtonH,
-		selectBackColor,
-	)
-	selectTextScale := 0.8 * float32(startButtonH) / float32(baseFontHeight)
-	selectW, selectH := window.GetScaledTextSize("sElect", selectTextScale)
-	window.DrawScaledText(
-		"sElect",
-		selectButtonX+(startButtonW-selectW)/2,
-		startButtonY+(startButtonH-selectH)/2,
-		selectTextScale,
-		selectTextColor,
-	)
 	selectButtonRect := rect(selectButtonX, startButtonY, startButtonW, startButtonH)
-	if selectButtonRect.contains(mouseX, mouseY) {
-		selectButtonRect.expand(10).fill(window, hoverColor)
-		if leftClick {
-			toggleButton(&state.frameInputs[currentReplayFrame], ButtonSelect)
-		}
-	}
 
-	// Let the user toggle buttons for the current frame.
-	for key, b := range keyMap {
-		if window.WasKeyPressed(key) {
-			down := isButtonDown(state.frameInputs[currentReplayFrame], b)
-			setButtonDown(&state.frameInputs[currentReplayFrame], b, !down)
-			state.frameCache.clear()
-			state.dirtyFrameIndex = currentReplayFrame
-		}
-	}
-
-	// Emulate the next frame.
-	state.keyRepeatCountdown--
-	keyTriggered := func(key draw.Key) bool {
-		if state.replayPaused {
-			if window.WasKeyPressed(key) || window.IsKeyDown(key) && state.keyRepeatCountdown <= 0 {
-				state.keyRepeatCountdown = 10
-				return true
-			}
-			return false
-		} else {
-			return window.IsKeyDown(key)
-		}
-	}
-
-	frameDelta := 1
-	if state.replayPaused {
-		frameDelta = 0
-	}
-	if window.WasKeyPressed(draw.KeyHome) {
-		frameDelta = -state.nextReplayFrame
-	} else if keyTriggered(draw.KeyLeft) {
-		frameDelta = -1
-	} else if keyTriggered(draw.KeyUp) {
-		frameDelta = -5
-	} else if keyTriggered(draw.KeyPageUp) {
-		frameDelta = -20
-	} else if keyTriggered(draw.KeyRight) {
-		if state.replayPaused {
-			frameDelta = 1
-		} else {
-			frameDelta = 2
-		}
-	} else if keyTriggered(draw.KeyDown) {
-		frameDelta = 5
-	} else if keyTriggered(draw.KeyPageDown) {
-		frameDelta = 20
-	}
-
-	if frameDelta < 0 {
-		state.initReplayFrame(state.nextReplayFrame - 1 + frameDelta)
-	} else {
-		for range frameDelta {
-			state.updateGameboy(&state.emulatorGameboy, state.nextReplayFrame)
-			state.nextReplayFrame++
-		}
-	}
+	drawStartSelect(startButtonRect, "Start", ButtonStart)
+	drawStartSelect(selectButtonRect, "sElect", ButtonSelect)
 }
 
 func wasLeftClicked(window draw.Window) bool {
@@ -1489,6 +1479,19 @@ type frameCache struct {
 	nextIndexToRemove int
 }
 
+func (c *frameCache) removeFramesStartingAt(frameIndex int) {
+	n := 0
+	for i := range c.frameIndices {
+		if c.frameIndices[i] < frameIndex {
+			c.frameIndices[n] = c.frameIndices[i]
+			c.gameboys[n] = c.gameboys[i]
+			n++
+		}
+	}
+	c.frameIndices = c.frameIndices[:n]
+	c.gameboys = c.gameboys[:n]
+}
+
 func (c *frameCache) clear() {
 	c.frameIndices = c.frameIndices[:0]
 	c.gameboys = c.gameboys[:0]
@@ -1591,6 +1594,10 @@ func (r rectangle) expandXY(byX, byY int) rectangle {
 
 func (r rectangle) fill(window draw.Window, color draw.Color) {
 	window.FillRect(r.x, r.y, r.w, r.h, color)
+}
+
+func (r rectangle) fillEllipse(window draw.Window, color draw.Color) {
+	window.FillEllipse(r.x, r.y, r.w, r.h, color)
 }
 
 func check(err error) {
