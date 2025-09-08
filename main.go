@@ -133,6 +133,7 @@ type editorState struct {
 	// need to be emulated again.
 	dirtyFrameIndex     int // TODO Remove this.
 	frameCache          *frameCache
+	singleScreenBuffer  [4 * ScreenWidth * ScreenHeight]byte
 	gameboyScreenBuffer []byte
 	// We generate Gameboy screens to be display in our editor.
 	// screenBuffer is a temporary buffer that we reuse in every frame.
@@ -390,19 +391,18 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 
 	// Render the current screen.
 	window.CreateImage("gameboyScreen", ScreenWidth, ScreenHeight)
-	rgba := make([]byte, 4*ScreenWidth*ScreenHeight) // TODO Cache this.
 	i := 0
 	for y := range ScreenHeight {
 		for x := range ScreenWidth {
 			color := gb.PreparedData[x][y]
-			rgba[i+0] = color[0]
-			rgba[i+1] = color[1]
-			rgba[i+2] = color[2]
-			rgba[i+3] = 255
+			state.singleScreenBuffer[i+0] = color[0]
+			state.singleScreenBuffer[i+1] = color[1]
+			state.singleScreenBuffer[i+2] = color[2]
+			state.singleScreenBuffer[i+3] = 255
 			i += 4
 		}
 	}
-	window.SetImagePixels("gameboyScreen", rgba)
+	window.SetImagePixels("gameboyScreen", state.singleScreenBuffer[:])
 
 	window.FillRect(0, 0, windowW, windowH, toColor(ColorPalette[3]))
 
