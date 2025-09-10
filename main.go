@@ -128,10 +128,6 @@ type editorState struct {
 	// very first item in keyFrameStates is for frame 0.
 	keyFrameStates []Gameboy
 
-	// dirtyFrameIndex is the first frame that needs to be emulated again
-	// because its state has changed. All frames after this (and including it)
-	// need to be emulated again.
-	dirtyFrameIndex     int // TODO Remove this.
 	frameCache          *frameCache
 	singleScreenBuffer  [4 * ScreenWidth * ScreenHeight]byte
 	gameboyScreenBuffer []byte
@@ -143,17 +139,20 @@ type editorState struct {
 	lastWindowH  int
 	fullscreen   bool
 
-	dragStartFrame          int
-	dragStartSelection      frameSelection
-	dragStartInputs         []inputState
-	stateBeforeDrag         inputStateRange
+	// dragStart... are for dragging frame inputs.
+	dragStartFrame     int
+	dragStartSelection frameSelection
+	dragStartInputs    []inputState
+
 	doubleClickPending      bool
 	pendingDoubleClickFrame int
 	controlWasDown          bool
 	keyRepeatCountdown      int
-	draggingFrameIndex      int
-	lastLeftClick           mouseClick
-	lastAction              inputAction
+	// draggingFrameIndex is for moving the current position in time (the
+	// left-most visible frame). It is NOT for dragging inputs.
+	draggingFrameIndex int
+	lastLeftClick      mouseClick
+	lastAction         inputAction
 
 	// We can toggle between the editor which freezes time and shows multiple
 	// frames at once and running the emulator which replays the game in
@@ -214,24 +213,6 @@ func (s *editorState) updateGameboy(gameboy *Gameboy, frameIndex int) {
 	}
 
 	gameboy.Update()
-}
-
-func (s *editorState) createKeyFramesUpTo(keyFrameIndex int) {
-	for keyFrameIndex >= len(s.keyFrameStates) {
-		last := len(s.keyFrameStates) - 1
-
-		if last == -1 {
-			gb := NewGameboy(globalROM, GameboyOptions{})
-			s.updateGameboy(&gb, 0)
-			s.keyFrameStates = append(s.keyFrameStates, gb)
-		} else {
-			gb := s.keyFrameStates[last]
-			for i := range keyFrameInterval {
-				s.updateGameboy(&gb, last*keyFrameInterval+i+1)
-			}
-			s.keyFrameStates = append(s.keyFrameStates, gb)
-		}
-	}
 }
 
 func (s *editorState) generateFrame(frameIndex int) Gameboy {
@@ -303,7 +284,9 @@ func (s *editorState) setDirtyFrame(frameIndex int) {
 	//         201 | 3
 	//
 	keep := (frameIndex + keyFrameInterval - 1) / keyFrameInterval
-	s.keyFrameStates = s.keyFrameStates[:keep]
+	if keep < len(s.keyFrameStates) {
+		s.keyFrameStates = s.keyFrameStates[:keep]
+	}
 
 	s.frameCache.removeFramesStartingAt(frameIndex)
 }
@@ -317,6 +300,26 @@ func (state *editorState) toggleButton(frameIndex int, button Button) {
 	}
 
 	toggleButton(&state.frameInputs[frameIndex], button)
+	state.setDirtyFrame(frameIndex)
+}
+
+func (s *editorState) isButtonDown(frameIndex int, button Button) bool {
+	if frameIndex < len(s.frameInputs) {
+		return isButtonDown(s.frameInputs[frameIndex], button)
+	}
+	return isButtonDown(s.defaultInputs, button)
+}
+
+func (state *editorState) setButtonDown(frameIndex, count int, button Button, down bool) {
+	end := frameIndex + count - 1
+	for end >= len(state.frameInputs) {
+		state.frameInputs = append(state.frameInputs, state.defaultInputs)
+	}
+
+	for i := range count {
+		setButtonDown(&state.frameInputs[frameIndex+i], button, down)
+	}
+
 	state.setDirtyFrame(frameIndex)
 }
 
@@ -591,117 +594,44 @@ func wasLeftClicked(window draw.Window) bool {
 func (state *editorState) executeEditorFrame(window draw.Window) {
 	windowW, windowH := window.Size()
 	mouseX, mouseY := window.MousePosition()
+	rightMouseButtonDown := window.IsMouseDown(draw.RightButton)
+	leftMouseButtonDown := window.IsMouseDown(draw.LeftButton)
 	leftClick := wasLeftClicked(window)
 	shiftDown := window.IsKeyDown(draw.KeyLeftShift) || window.IsKeyDown(draw.KeyRightShift)
 	controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
 	altDown := window.IsKeyDown(draw.KeyLeftAlt) || window.IsKeyDown(draw.KeyRightAlt)
-
 	frameCountX := windowW / frameWidth
 	frameCountY := windowH / frameHeight
+	lastLeftMostFrame := state.leftMostFrame
+	lastActiveSelection := state.activeSelection
 
 	// Handle inputs.
+
+	if controlDown && !state.controlWasDown {
+		state.startDraggingFrameInputs(state.activeSelection.first)
+	}
 
 	if state.infoText != "" && window.WasKeyPressed(draw.KeyEscape) {
 		state.resetInfoText()
 		state.render()
 	}
 
-	lastLeftMostFrame := state.leftMostFrame
-	lastActiveSelection := state.activeSelection
-
-	startDraggingFrameInputs := func(atFrame int) {
-		// Start dragging frame inputs around with the keyboard.
-		state.dragStartFrame = atFrame
-		state.dragStartSelection = state.activeSelection
-		toCopy := state.frameInputs[state.activeSelection.start():state.activeSelection.end()]
-		state.dragStartInputs = append(state.dragStartInputs[:0], toCopy...)
-		state.stateBeforeDrag.frames = append(state.stateBeforeDrag.frames[:0], toCopy...)
-		state.stateBeforeDrag.start = state.activeSelection.start()
-	}
-
-	dragFrameInputsTo := func(selectionOffset int, adjustView bool) {
-		state.activeSelection = state.dragStartSelection
-		state.activeSelection.first = max(0, state.activeSelection.first+selectionOffset)
-		state.activeSelection.last = max(0, state.activeSelection.last+selectionOffset)
-
-		if state.activeSelection != lastActiveSelection {
-			// Reset the input state to before the start of the drag.
-			for i := range state.stateBeforeDrag.frames {
-				state.frameInputs[state.stateBeforeDrag.start+i] = state.stateBeforeDrag.frames[i]
-			}
-
-			changeStart := min(state.dragStartSelection.start(), state.activeSelection.start())
-			changeEnd := max(state.dragStartSelection.end(), state.activeSelection.end())
-
-			for changeEnd >= len(state.frameInputs) {
-				state.frameInputs = append(state.frameInputs, state.defaultInputs)
-			}
-
-			state.stateBeforeDrag.start = changeStart
-			state.stateBeforeDrag.frames = append(state.stateBeforeDrag.frames[:0], state.frameInputs[changeStart:changeEnd+1]...)
-
-			var fillLeft inputState
-			if state.dragStartSelection.start() >= 1 {
-				fillLeft = state.frameInputs[state.dragStartSelection.start()-1]
-			}
-
-			fillRight := state.defaultInputs
-			end := state.dragStartSelection.end()
-			if end < len(state.frameInputs) {
-				fillRight = state.frameInputs[end]
-			}
-
-			for i := state.dragStartSelection.start(); i < state.activeSelection.start(); i++ {
-				state.frameInputs[i] = fillLeft
-			}
-
-			for i := state.activeSelection.end(); i < state.dragStartSelection.end(); i++ {
-				state.frameInputs[i] = fillRight
-			}
-
-			for i := len(state.dragStartInputs) - 1; i >= 0; i-- {
-				j := state.dragStartSelection.end() - 1 - i + selectionOffset
-				if j >= 0 {
-					state.frameInputs[j] = state.dragStartInputs[i]
-				}
-			}
-
-			if adjustView {
-				// Make sure the new frames are in view. Only do this if
-				// less than a screen full of frames is selected. In case
-				// the user hits Shift+End we do not want the view to skip
-				// all the way to the end. In this case, we leave the view
-				// as is.
-				if state.activeSelection.count() < frameCountX*frameCountY {
-					state.leftMostFrame = min(state.leftMostFrame, state.activeSelection.start())
-					state.leftMostFrame = max(state.leftMostFrame, state.activeSelection.end()-frameCountX*frameCountY)
-				}
-			}
-
-			state.dirtyFrameIndex = min(state.dragStartSelection.start(), state.activeSelection.start())
-			state.render()
-		}
-	}
-
-	if controlDown && !state.controlWasDown {
-		startDraggingFrameInputs(state.activeSelection.first)
-	}
-
+	// Append digits to the repeat counter text.
 	for i := range 10 {
 		if window.WasKeyPressed(draw.Key0+draw.Key(i)) ||
 			window.WasKeyPressed(draw.KeyNum0+draw.Key(i)) {
-			_, err := strconv.Atoi(state.infoText)
-			isNumber := err == nil
-			if !isNumber {
-				state.resetInfoText()
+
+			digit := strconv.Itoa(i)
+
+			n, err := strconv.Atoi(state.infoText + digit)
+			isValidNumber := err == nil && 1 <= n && n <= 216000
+
+			if !isValidNumber {
+				state.setInfo(digit)
+			} else {
+				state.setInfo(state.infoText + digit)
 			}
-			// At this point we have a number in infoText or infoText is
-			// empty. If infoText is empty, we cannot type a zero, only
-			// [1-9]. Zero can be typed only after other digits.
-			if i > 0 || state.infoText != "" {
-				state.setInfo(state.infoText + strconv.Itoa(i))
-				state.render()
-			}
+			state.render()
 		}
 	}
 
@@ -735,35 +665,22 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		}
 
 		if newAction != state.lastAction {
-			// start := lastAction.frameIndex
 			b := state.lastAction.button
 			down := state.lastAction.down
 
-			// First undo the last action.
-			for i := range state.lastAction.count {
-				j := state.lastAction.frameIndex + i
-				setButtonDown(&state.frameInputs[j], b, !down)
-			}
+			// First undo the last action, then apply the new action.
+			state.setButtonDown(state.lastAction.frameIndex, state.lastAction.count, b, !down)
+			state.setButtonDown(newAction.frameIndex, newAction.count, b, down)
 
-			// Now apply the new action.
+			state.activeSelection.first = newAction.frameIndex
+			state.activeSelection.last = newAction.frameIndex + newAction.count - 1
 			state.lastAction = newAction
-			for i := range state.lastAction.count {
-				j := state.lastAction.frameIndex + i
-				if j >= len(state.frameInputs) {
-					state.frameInputs = append(state.frameInputs, state.defaultInputs)
-				}
-				setButtonDown(&state.frameInputs[j], b, down)
-			}
-
-			state.activeSelection.first = state.lastAction.frameIndex
-			state.activeSelection.last = state.lastAction.frameIndex + state.lastAction.count - 1
 
 			state.resetInfoText()
 			state.render()
 		}
 	}
 
-	frameDelta := 0
 	state.keyRepeatCountdown--
 	keyTriggered := func(key draw.Key) bool {
 		if window.WasKeyPressed(key) || window.IsKeyDown(key) && state.keyRepeatCountdown <= 0 {
@@ -772,6 +689,8 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		}
 		return false
 	}
+
+	frameDelta := 0
 	if keyTriggered(draw.KeyLeft) {
 		frameDelta = -repeatCount
 	}
@@ -794,16 +713,19 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	scrollY := window.MouseWheelY()
 	if scrollY != 0 {
 		ticks := -int(scrollY)
+
 		// By default we scroll down a whole line of frames.
 		// Holding Shift will scroll a single frame at a time.
 		// Holding Control will scroll a whole screen full of frames at
 		// a time.
-		frameDelta = ticks * frameCountX
+		delta := ticks * frameCountX
 		if shiftDown {
-			frameDelta = ticks
+			delta = ticks
 		} else if controlDown {
-			frameDelta = ticks * frameCountX * frameCountY
+			delta = ticks * frameCountX * frameCountY
 		}
+
+		state.leftMostFrame = max(0, state.leftMostFrame+delta)
 	}
 
 	// On Enter and G we go to the frame number that was typed in. In
@@ -819,7 +741,8 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	}
 
 	if frameDelta != 0 {
-		if shiftDown && scrollY == 0 {
+		if shiftDown {
+			// Shift+Arrow Keys expands the selection.
 			state.activeSelection.last = max(0, state.activeSelection.last+frameDelta)
 
 			if state.activeSelection.last < state.leftMostFrame {
@@ -828,14 +751,17 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			if state.activeSelection.last >= state.leftMostFrame+frameCountX*frameCountY {
 				state.leftMostFrame += frameDelta
 			}
-		} else if controlDown && scrollY == 0 {
+		} else if controlDown {
+			// Ctrl+Arrow Keys moves the selected frame inputs around.
 			selectionOffset := state.activeSelection.first - state.dragStartSelection.first + frameDelta
-			dragFrameInputsTo(selectionOffset, true)
-		} else if altDown && scrollY == 0 {
+			state.dragFrameInputsTo(selectionOffset, lastActiveSelection)
+		} else if altDown {
+			// Alt+Arrow Keys moves the selection around.
 			last := len(state.frameInputs) - 1
 			state.activeSelection.first = max(0, min(last, state.activeSelection.first+frameDelta))
 			state.activeSelection.last = max(0, min(last, state.activeSelection.last+frameDelta))
 		} else {
+			// Arrow Keys alone move us through time.
 			state.leftMostFrame = max(0, state.leftMostFrame+frameDelta)
 		}
 	}
@@ -847,6 +773,9 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 
 		state.leftMostFrame = 0
 	}
+
+	// TODO Think about shrinking state.frameInputs at the end when it has only
+	// empty inputs or maybe if it has only the default inputs?
 	if window.WasKeyPressed(draw.KeyEnd) {
 		if shiftDown {
 			state.activeSelection.last = len(state.frameInputs) - 1
@@ -867,31 +796,28 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		state.doubleClickPending = time.Now().Sub(state.lastLeftClick.time).Seconds() < 0.300 &&
 			abs(state.lastLeftClick.x-mouseX) < 10 &&
 			abs(state.lastLeftClick.y-mouseY) < 10
+		singleClick := !state.doubleClickPending
+
 		if state.doubleClickPending {
 			state.pendingDoubleClickFrame = frameUnderMouse
 		}
-		singleClick := !state.doubleClickPending
 
-		if singleClick {
-			if frameUnderMouse != -1 {
-				if shiftDown {
-					state.activeSelection.last = frameUnderMouse
-				} else if controlDown {
-					startDraggingFrameInputs(frameUnderMouse)
-				} else {
-					// On single-click, make the frame under the mouse active.
-					state.activeSelection.first = frameUnderMouse
-					state.activeSelection.last = frameUnderMouse
+		if singleClick && frameUnderMouse != -1 {
+			if shiftDown {
+				state.activeSelection.last = frameUnderMouse
+			} else if controlDown {
+				state.startDraggingFrameInputs(frameUnderMouse)
+			} else {
+				// On single-click, make the frame under the mouse active.
+				state.activeSelection.first = frameUnderMouse
+				state.activeSelection.last = frameUnderMouse
 
-					state.lastLeftClick.time = time.Now()
-					state.lastLeftClick.x = mouseX
-					state.lastLeftClick.y = mouseY
-				}
+				state.lastLeftClick.time = time.Now()
+				state.lastLeftClick.x = mouseX
+				state.lastLeftClick.y = mouseY
 			}
 		}
 	}
-
-	leftMouseButtonDown := window.IsMouseDown(draw.LeftButton)
 
 	if leftMouseButtonDown && frameUnderMouse != -1 {
 		state.activeSelection.last = frameUnderMouse
@@ -901,8 +827,8 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		state.doubleClickPending = false
 
 		if frameUnderMouse != -1 && frameUnderMouse == state.pendingDoubleClickFrame {
-			// On double-click, select all frames left and right that
-			// have the same button states.
+			// On double-click, select all frames left and right that have the
+			// same button states.
 			a, b := frameUnderMouse, frameUnderMouse
 			for a-1 >= 0 && state.frameInputs[a-1] == state.frameInputs[a] {
 				a--
@@ -912,38 +838,23 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			}
 			state.activeSelection.first = a
 			state.activeSelection.last = b
-			state.render()
 		}
 	}
 
 	if leftMouseButtonDown && state.dragStartFrame != -1 && frameUnderMouse != -1 {
 		selectionOffset := frameUnderMouse - state.dragStartFrame
-		dragFrameInputsTo(selectionOffset, false)
+		state.dragFrameInputsTo(selectionOffset, lastActiveSelection)
 	}
 
 	if !leftMouseButtonDown {
 		state.dragStartFrame = -1
 	}
 
-	rightMouseButtonDown := window.IsMouseDown(draw.RightButton)
-
 	// Use the right mouse button for dragging the screen around.
-	if rightMouseButtonDown {
-		frameX := mouseX / frameWidth
-		frameY := mouseY / frameHeight
-
-		if 0 <= frameX && frameX < frameCountX &&
-			0 <= frameY && frameY < frameCountY {
-			state.draggingFrameIndex = state.leftMostFrame + frameY*frameCountX + frameX
-		}
-	}
-
-	if state.draggingFrameIndex != -1 && rightMouseButtonDown {
-		frameX := mouseX / frameWidth
-		frameY := mouseY / frameHeight
-
-		if 0 <= frameX && frameX < frameCountX &&
-			0 <= frameY && frameY < frameCountY {
+	if rightMouseButtonDown && frameUnderMouse != -1 {
+		if state.draggingFrameIndex == -1 {
+			state.draggingFrameIndex = frameUnderMouse
+		} else {
 			screenIndex := frameY*frameCountX + frameX
 			state.leftMostFrame = state.draggingFrameIndex - screenIndex
 		}
@@ -964,6 +875,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		for i := state.activeSelection.start(); i < state.activeSelection.end(); i++ {
 			state.frameInputs[i] = 0
 		}
+		state.setDirtyFrame(state.activeSelection.start())
 		state.render()
 	}
 
@@ -972,33 +884,32 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			state.resetInfoText()
 
 			firstFrameIndex := state.activeSelection.start()
-			down := !isButtonDown(state.frameInputs[firstFrameIndex], b)
+			down := !state.isButtonDown(firstFrameIndex, b)
 
-			if shiftDown && state.activeSelection.first == state.activeSelection.last {
-				// Toggle button for all the future if we do not
-				// overwrite any existing future button of this kind.
+			singleFrameSelected := state.activeSelection.first == state.activeSelection.last
+
+			if shiftDown && singleFrameSelected {
+				// Toggle button for all the future if we do not overwrite any
+				// existing future button of this kind.
+				// TODO Allow toggling even though the button is pressed in the
+				// future already.
 				canToggle := true
 				for i := firstFrameIndex + 2; i < len(state.frameInputs); i++ {
-					canToggle = canToggle &&
-						isButtonDown(state.frameInputs[i], b) == isButtonDown(state.frameInputs[i-1], b)
+					canToggle = canToggle && state.isButtonDown(i, b) == state.isButtonDown(i-1, b)
 				}
 
 				if canToggle {
-					for i := firstFrameIndex; i < len(state.frameInputs); i++ {
-						setButtonDown(&state.frameInputs[i], b, down)
-					}
+					state.setButtonDown(firstFrameIndex, len(state.frameInputs)-firstFrameIndex, b, down)
 					setButtonDown(&state.defaultInputs, b, down)
 				} else {
 					state.setWarning("Cannot toggle button, it is already used in the future.")
 				}
-			} else if state.activeSelection.first == state.activeSelection.last {
+			} else if singleFrameSelected {
 				// Toggle button for the active frame.
 				for state.activeSelection.first+repeatCount > len(state.frameInputs) {
 					state.frameInputs = append(state.frameInputs, state.defaultInputs)
 				}
-				for i := range repeatCount {
-					setButtonDown(&state.frameInputs[state.activeSelection.first+i], b, down)
-				}
+				state.setButtonDown(state.activeSelection.first, repeatCount, b, down)
 
 				state.lastAction = inputAction{
 					valid:      true,
@@ -1012,9 +923,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 				state.activeSelection.last = state.lastAction.frameIndex + state.lastAction.count - 1
 			} else {
 				// We have multiple frames selected.
-				for i := state.activeSelection.start(); i < state.activeSelection.end(); i++ {
-					setButtonDown(&state.frameInputs[i], b, down)
-				}
+				state.setButtonDown(state.activeSelection.start(), state.activeSelection.count(), b, down)
 				state.lastAction = inputAction{
 					valid:      true,
 					frameIndex: state.activeSelection.start(),
@@ -1024,7 +933,6 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 				}
 			}
 
-			state.dirtyFrameIndex = firstFrameIndex
 			state.render()
 		}
 	}
@@ -1035,53 +943,19 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		state.render()
 	}
 
-	emulateFrames := func(startFrame, endFrame int) []gameboyScreen {
-		state.screenBuffer = state.screenBuffer[:0]
-
-		keyFrameIndex := startFrame / keyFrameInterval
-
-		// When inputs change we need to re-generate key frames after the
-		// change. We do this by simply removing those key frames from the
-		// array. They will be re-generated after that.
-		lastValidKeyFrame := (state.dirtyFrameIndex + keyFrameInterval - 1) / keyFrameInterval
-		lastValidKeyFrame = min(lastValidKeyFrame, len(state.keyFrameStates))
-		state.keyFrameStates = state.keyFrameStates[:lastValidKeyFrame]
-
-		state.createKeyFramesUpTo(keyFrameIndex)
-
-		state.dirtyFrameIndex = len(state.keyFrameStates) * keyFrameInterval
-
-		gb := state.keyFrameStates[keyFrameIndex]
-
-		// TODO Think about exactly (especially considering the frame
-		// selection) the generation of key frames and input states
-		// expands. This code will generate one more frame input than
-		// frames visible on the screen. When we move a selection past
-		// the last frame, we use >= instead of > which was a hack to
-		// work around this extra frame.
-		currentFrame := keyFrameIndex * keyFrameInterval
-		for currentFrame < startFrame {
-			currentFrame++
-			state.updateGameboy(&gb, currentFrame)
-		}
-
-		for currentFrame <= endFrame {
-			state.screenBuffer = append(state.screenBuffer, gb.PreparedData)
-			currentFrame++
-			state.updateGameboy(&gb, currentFrame)
-		}
-
-		return state.screenBuffer
-	}
-
 	if state.screenDirty {
 		state.screenDirty = false
 
 		// We need to create the Gameboy screens for these frames:
 		// [leftMostFrame..lastVisibleFrame]
 		lastVisibleFrame := state.leftMostFrame + frameCountX*frameCountY - 1
+
 		// TODO Remember these until we change frames.
-		screens := emulateFrames(state.leftMostFrame, lastVisibleFrame)
+		state.screenBuffer = state.screenBuffer[:0]
+		for i := state.leftMostFrame; i <= lastVisibleFrame; i++ {
+			gb := state.generateFrame(i)
+			state.screenBuffer = append(state.screenBuffer, gb.PreparedData)
+		}
 
 		screenCount := frameCountX * frameCountY
 		bytesPerScreen := ScreenWidth * ScreenHeight * 4
@@ -1100,7 +974,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			for frameX := range frameCountX {
 				screenOffsetX := frameX * ScreenWidth
 				screenOffsetY := frameY * ScreenHeight
-				screen := screens[frameX+frameY*frameCountX]
+				screen := state.screenBuffer[frameX+frameY*frameCountX]
 				for y := range ScreenHeight {
 					for x := range ScreenWidth {
 						c := screen[x][y]
@@ -1242,6 +1116,75 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	state.controlWasDown = controlDown
 }
 
+func (s *editorState) startDraggingFrameInputs(atFrame int) {
+	// Start dragging frame inputs around with keyboard or mouse.
+	s.dragStartFrame = atFrame
+	s.dragStartSelection = s.activeSelection
+	s.dragStartInputs = append(s.dragStartInputs[:0], s.frameInputs...)
+}
+
+func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelection frameSelection) {
+	state.activeSelection = frameSelection{
+		first: max(0, state.dragStartSelection.first+selectionOffset),
+		last:  max(0, state.dragStartSelection.last+selectionOffset),
+	}
+
+	if state.activeSelection == lastActiveSelection {
+		// No real dragging has occurred, e.g. if the mouse cursor is still
+		// inside the start frame and has only been moved one pixel.
+		return
+	}
+
+	// TODO We could allow changing the last action after dragging it, in case
+	// the last action is the one that was being dragged.
+	state.lastAction.valid = false
+
+	// Reset the input state to before the start of the drag.
+	copy(state.frameInputs, state.dragStartInputs)
+	// There might be more frame inputs than before the drag, so fill those with
+	// the default input state.
+	for i := len(state.dragStartInputs); i < len(state.frameInputs); i++ {
+		state.frameInputs[i] = state.defaultInputs
+	}
+
+	dragStart := state.dragStartSelection.start()
+	dragCount := state.dragStartSelection.count()
+	dragEnd := dragStart + dragCount - 1
+
+	newStart := state.activeSelection.start()
+	newEnd := state.activeSelection.end() - 1
+
+	var leftFill inputState
+	if dragStart > 0 {
+		leftFill = state.dragStartInputs[dragStart-1]
+	}
+
+	rightFill := state.defaultInputs
+	if dragEnd+1 < len(state.dragStartInputs) {
+		rightFill = state.dragStartInputs[dragEnd+1]
+	}
+
+	for i := range dragCount {
+		src := dragStart + i
+		dest := newStart + i
+		if dest < len(state.frameInputs) {
+			state.frameInputs[dest] = state.dragStartInputs[src]
+		} else {
+			state.frameInputs = append(state.frameInputs, state.dragStartInputs[src])
+		}
+	}
+
+	for i := dragStart; i < newStart; i++ {
+		state.frameInputs[i] = leftFill
+	}
+	for i := dragEnd; i > newEnd; i-- {
+		state.frameInputs[i] = rightFill
+	}
+
+	state.setDirtyFrame(min(dragStart, newStart))
+	state.render()
+}
+
 type mouseClick struct {
 	time time.Time
 	x    int
@@ -1257,11 +1200,6 @@ type inputAction struct {
 }
 
 type gameboyScreen [ScreenWidth][ScreenHeight][3]uint8
-
-type inputStateRange struct {
-	start  int
-	frames []inputState
-}
 
 // frameSelection has the first and last selected frame indices where first was
 // selected before (in time) last. They can be in any order. If first == last
@@ -1367,7 +1305,7 @@ func (s *editorState) loadLastSpeedrun() {
 	s.defaultInputs = defaultInputsTemp
 	s.frameInputs = frameInputsTemp
 	s.keyFrameStates = keyFrameStatesTemp
-	s.dirtyFrameIndex = len(s.keyFrameStates) * keyFrameInterval
+	s.frameCache.clear()
 }
 
 func (s *editorState) saveCurrentSpeedrun() {
