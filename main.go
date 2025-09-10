@@ -410,7 +410,7 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	window.FillRect(0, 0, windowW, windowH, toColor(ColorPalette[3]))
 
 	const (
-		inputMenuW      = 200
+		inputMenuW      = 220
 		inputMenuMargin = 20
 	)
 
@@ -442,6 +442,12 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	// Clear the menu background.
 	inputMenuX := screenX + screenW + inputMenuMargin
 	window.FillRect(inputMenuX, 0, inputMenuW, windowH, rgb(224, 248, 208))
+
+	const frameNumberScale = 1.9
+	frameNumber := fmt.Sprintf("Frame %d", state.lastReplayedFrame)
+	frameNumberW, _ := window.GetScaledTextSize(frameNumber, frameNumberScale)
+	frameNumberX := inputMenuX + (inputMenuW-frameNumberW)/2
+	window.DrawScaledText(frameNumber, frameNumberX, 0, frameNumberScale, draw.Black)
 
 	drawAB := func(r rectangle, text string, button Button) {
 		textColor := draw.Gray
@@ -482,7 +488,7 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 
 	bButtonX := inputMenuX + (inputMenuW-(abButtonSize+abButtonSpaceX+abButtonSize))/2
 	aButtonX := bButtonX + abButtonSize + abButtonSpaceX
-	aButtonY := abButtonSize / 2
+	aButtonY := abButtonSize
 	bButtonY := aButtonY + abButtonSize/2
 
 	drawAB(rect(aButtonX, aButtonY, abButtonSize, abButtonSize), "A", ButtonA)
