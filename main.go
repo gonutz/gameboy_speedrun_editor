@@ -769,9 +769,9 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	if window.WasKeyPressed(draw.KeyHome) {
 		if shiftDown {
 			state.activeSelection.last = 0
+		} else {
+			state.leftMostFrame = 0
 		}
-
-		state.leftMostFrame = 0
 	}
 
 	// TODO Think about shrinking state.frameInputs at the end when it has only
@@ -779,9 +779,9 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	if window.WasKeyPressed(draw.KeyEnd) {
 		if shiftDown {
 			state.activeSelection.last = len(state.frameInputs) - 1
+		} else {
+			state.leftMostFrame = len(state.frameInputs) - frameCountX*frameCountY - 1
 		}
-
-		state.leftMostFrame = len(state.frameInputs) - frameCountX*frameCountY - 1
 	}
 
 	frameX := mouseX / frameWidth
