@@ -339,6 +339,10 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 		}
 	}
 
+	if window.WasKeyPressed(draw.KeyF3) {
+		state.checkFrames(state.lastReplayedFrame)
+	}
+
 	// Let the user toggle buttons for the current frame.
 	for key, b := range keyMap {
 		if window.WasKeyPressed(key) {
@@ -614,6 +618,10 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	lastActiveSelection := state.activeSelection
 
 	// Handle inputs.
+
+	if window.WasKeyPressed(draw.KeyF3) {
+		state.checkFrames(state.leftMostFrame)
+	}
 
 	if controlDown && !state.controlWasDown {
 		state.startDraggingFrameInputs(state.activeSelection.first)
@@ -1365,6 +1373,40 @@ func (s *editorState) saveCurrentSpeedrun() {
 	if saveErr != nil {
 		fmt.Println("error saving session file:", saveErr)
 	}
+}
+
+func (state *editorState) checkFrames(upTo int) {
+	// TODO Remove debug code from final product.
+
+	fmt.Println("checking states up to frame", upTo)
+
+	wantGB := NewGameboy(globalROM, GameboyOptions{})
+	for i := range upTo + 1 {
+		inputs := state.frameInputs[i]
+
+		for b := range buttonCount {
+			if isButtonDown(inputs, b) {
+				wantGB.PressButton(b)
+			} else {
+				wantGB.ReleaseButton(b)
+			}
+		}
+
+		wantGB.Update()
+	}
+
+	haveGB := state.generateFrame(upTo)
+
+	var have, want bytes.Buffer
+	binary.Write(&have, binary.LittleEndian, &haveGB)
+	binary.Write(&want, binary.LittleEndian, &wantGB)
+	if !bytes.Equal(have.Bytes(), want.Bytes()) {
+		panic("Gameboys are not equal")
+	}
+
+	fmt.Println("no problems encountered")
+	state.setInfo("no problems encountered")
+	state.render()
 }
 
 func startProfiling() {
