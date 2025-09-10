@@ -266,6 +266,8 @@ func (s *editorState) generateFrame(frameIndex int) Gameboy {
 		s.frameCache.set(currentIndex, gb)
 	}
 
+	s.frameCache.set(currentIndex, gb)
+
 	return gb
 }
 
@@ -1130,6 +1132,11 @@ func (s *editorState) startDraggingFrameInputs(atFrame int) {
 }
 
 func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelection frameSelection) {
+	// affectedFrame might be the left-most frame to be marked dirty. If we drag
+	// inputs around to the past, the back to the future, this affectedFrame is
+	// the earliest frame from where we move back to the future.
+	affectedFrame := state.activeSelection.start()
+
 	state.activeSelection = frameSelection{
 		first: max(0, state.dragStartSelection.first+selectionOffset),
 		last:  max(0, state.dragStartSelection.last+selectionOffset),
@@ -1187,7 +1194,7 @@ func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelec
 		state.frameInputs[i] = rightFill
 	}
 
-	state.setDirtyFrame(min(dragStart, newStart))
+	state.setDirtyFrame(min(dragStart, newStart, affectedFrame))
 	state.render()
 }
 
