@@ -1122,6 +1122,10 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		window.FillRect(frameCountX*frameWidth, 0, windowW, windowH, draw.Black)
 		window.FillRect(0, frameCountY*frameHeight, windowW, windowH, draw.Black)
 
+		if state.infoText == "" && state.activeSelection.count() > 1 {
+			state.infoText = fmt.Sprintf("%d frames selected", state.activeSelection.count())
+		}
+
 		if state.infoText != "" {
 			textW, textH := window.GetScaledTextSize(state.infoText, infoTextScale)
 			textX := windowW - textW
