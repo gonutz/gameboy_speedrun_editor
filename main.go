@@ -93,11 +93,6 @@ func main() {
 			// the pause state because that button is still down.
 			state.replayPaused = !state.lastReplayPaused
 
-			// TODO Do not clear the cache outside of setDirtyFrame any longer.
-			// Once we go through generateFrame and setDirtyFrame for the editor
-			// as well, we can remove this line.
-			state.frameCache.clear()
-
 			state.lastReplayedFrame = state.leftMostFrame
 			state.render()
 		}
@@ -218,25 +213,35 @@ func (s *editorState) updateGameboy(gameboy *Gameboy, frameIndex int) {
 }
 
 func (s *editorState) generateFrame(frameIndex int) Gameboy {
-	if s.frameCache.contains(frameIndex) {
-		return s.frameCache.at(frameIndex)
-	}
+	// There are three possible scenarios:
+	//
+	// 1. No frame up to frameIndex is cached, so we have to go from the latest
+	//    key frame.
+	// 2. A frame at or shortly before frameIndex is cached, so we go from that
+	//    emulating that cached frame forwards.
+	// 3. A frame before frameIndex is cached, BUT there is a key frame that
+	//    comes after that. In this case we use the key frame because it will
+	//    take fewer emulation steps than using the older cached frame.
 
-	if s.frameCache.contains(frameIndex - 1) {
-		gb := s.frameCache.at(frameIndex - 1)
-		s.updateGameboy(&gb, frameIndex)
+	// Calculate latestKeyFrame, the latest frame that exists in the key frames
+	// array.
+	latestKeyFrameIndex := min(frameIndex/keyFrameInterval, len(s.keyFrameStates)-1)
+	latestKeyFrame := latestKeyFrameIndex * keyFrameInterval
 
-		s.frameCache.set(frameIndex, gb)
+	gb, currentIndex := s.frameCache.latestFrameUpTo(frameIndex)
 
-		if frameIndex%keyFrameInterval == 0 &&
-			(frameIndex/keyFrameInterval) == len(s.keyFrameStates) {
-			s.keyFrameStates = append(s.keyFrameStates, gb)
+	if currentIndex != -1 && currentIndex >= latestKeyFrame {
+		// Scenario 2: emulate forward from the cached frame.
+		for currentIndex < frameIndex {
+			currentIndex++
+			s.updateGameboy(&gb, currentIndex)
+			s.frameCache.set(currentIndex, gb)
 		}
-
 		return gb
 	}
 
-	// Go from the latest key frame before this frame.
+	// Scenarios 1 and 3: emulate forward from the latest key frame before
+	// frameIndex.
 	keyFrameIndex := frameIndex / keyFrameInterval
 
 	// Create as many key frames as we need.
@@ -258,17 +263,17 @@ func (s *editorState) generateFrame(frameIndex int) Gameboy {
 
 	// Now the key frame we need exists. We start from there, create frames up
 	// to where we want to go, while putting those frames in the cache as well.
-	gb := s.keyFrameStates[keyFrameIndex]
+	gb = s.keyFrameStates[keyFrameIndex]
 
 	// Emulate frames until we reach our destination.
-	currentIndex := keyFrameIndex * keyFrameInterval
+	currentIndex = keyFrameIndex * keyFrameInterval
+	s.frameCache.set(currentIndex, gb)
+
 	for currentIndex < frameIndex {
 		s.updateGameboy(&gb, currentIndex+1)
 		currentIndex++
 		s.frameCache.set(currentIndex, gb)
 	}
-
-	s.frameCache.set(currentIndex, gb)
 
 	return gb
 }
@@ -1495,6 +1500,29 @@ func (c *frameCache) clear() {
 	c.frameIndices = c.frameIndices[:0]
 	c.gameboys = c.gameboys[:0]
 	c.nextIndexToRemove = 0
+}
+
+// latestFrameUpTo returns the cached frame whose frame index is the maximum
+// index <= the given frameIndex, i.e. if frameIndex is cached, the result will
+// be the Gameboy at frameIndex and frameIndex; if the frame right before that
+// is cached, it will be the Gameboy right before frameIndex and frameIndex-1,
+// and so on.
+func (c *frameCache) latestFrameUpTo(frameIndex int) (Gameboy, int) {
+	bestIndex := -1
+	bestFrameIndex := -1
+
+	for i, haveIndex := range c.frameIndices {
+		if haveIndex <= frameIndex && haveIndex > bestFrameIndex {
+			bestIndex = i
+			bestFrameIndex = haveIndex
+		}
+	}
+
+	if bestIndex == -1 {
+		return Gameboy{}, -1
+	}
+
+	return c.gameboys[bestIndex], c.frameIndices[bestIndex]
 }
 
 func (c *frameCache) contains(frameIndex int) bool {
