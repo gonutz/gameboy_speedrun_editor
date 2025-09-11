@@ -42,6 +42,8 @@ const (
 	fontHeight  = 13
 	frameWidth  = 1 + ScreenWidth + 1
 	frameHeight = fontHeight + ScreenHeight + 1
+
+	infoTextScale = 2 * textScale
 )
 
 func main() {
@@ -1121,11 +1123,11 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		window.FillRect(0, frameCountY*frameHeight, windowW, windowH, draw.Black)
 
 		if state.infoText != "" {
-			textW, textH := window.GetScaledTextSize(state.infoText, textScale)
+			textW, textH := window.GetScaledTextSize(state.infoText, infoTextScale)
 			textX := windowW - textW
 			textY := windowH - textH
-			window.FillRect(textX-1, textY-1, windowW, windowH, draw.Black)
-			window.DrawScaledText(state.infoText, textX, textY, textScale, state.infoTextColor)
+			window.FillRect(textX-1, textY-1, windowW, windowH, draw.RGBA(0, 0, 0, 0.8))
+			window.DrawScaledText(state.infoText, textX, textY, infoTextScale, state.infoTextColor)
 		}
 	}
 
