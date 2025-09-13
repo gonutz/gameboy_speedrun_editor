@@ -512,6 +512,10 @@ func (w *window) SetIcon(path string) error {
 	return nil
 }
 
+func (w *window) SetTitle(title string) {
+	w32.SetWindowText(w.handle, title)
+}
+
 func iconFromImage(img image.Image) (w32.HICON, error) {
 	// We create an icon structure in the form Windows likes which consists of a
 	// BITMAPINFOHEADER (see
@@ -937,7 +941,7 @@ func (w *window) SetImagePixels(path string, rgba []byte) error {
 	if err != nil {
 		return errors.New("d3d9.Texture.LockRect: " + err.Error())
 	}
-	rect.SetAllBytes(rgba, tex.width * 4)
+	rect.SetAllBytes(rgba, tex.width*4)
 	if err := tex.sysTexture.UnlockRect(0); err != nil {
 		return errors.New("d3d9.Texture.UnlockRect: " + err.Error())
 	}

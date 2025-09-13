@@ -35,6 +35,8 @@ var keyMap = map[draw.Key]Button{
 }
 
 const (
+	windowTitle = "Gameboy Speedrun Editor"
+
 	keyFrameInterval   = 100
 	sessionFileVersion = 1
 
@@ -62,7 +64,7 @@ func main() {
 	state.loadLastSpeedrun()
 	defer state.saveCurrentSpeedrun()
 
-	check(draw.RunWindow("Gameboy Speedrun Editor", 1500, 800, func(window draw.Window) {
+	check(draw.RunWindow(windowTitle, 1500, 800, func(window draw.Window) {
 		windowW, windowH := window.Size()
 		defer func() {
 			state.lastWindowW, state.lastWindowH = windowW, windowH
@@ -89,9 +91,11 @@ func main() {
 			return
 		}
 		if controlDown && window.WasKeyPressed(draw.KeyO) {
-			err := state.openFile()
+			path, err := state.openFile()
 			if err != nil {
 				state.setWarning(err.Error())
+			} else {
+				window.SetTitle(windowTitle + " - " + path)
 			}
 			state.render()
 			state.waitForLeftMouseRelease = true
@@ -1303,7 +1307,7 @@ func lastSessionPath() string {
 	return filepath.Join(os.Getenv("APPDATA"), "gameboy.speedrun")
 }
 
-func (s *editorState) openFile() error {
+func (s *editorState) openFile() (string, error) {
 	path, err := dialog.File().
 		Title("Load Speedrun").
 		Filter("GameBoy Speedrun", "speedrun").
@@ -1311,14 +1315,15 @@ func (s *editorState) openFile() error {
 
 	if err != nil {
 		// User cancelled the dialog.
-		return nil
+		return "", nil
 	}
 
 	err = s.open(path)
 	if err != nil {
-		return fmt.Errorf("failed to load '%s': %w", path, err)
+		return "", fmt.Errorf("failed to load '%s': %w", path, err)
 	}
-	return nil
+
+	return path, nil
 }
 
 func (s *editorState) open(path string) error {

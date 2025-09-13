@@ -47,6 +47,10 @@ type Window interface {
 	// fails, it returns an error.
 	SetIcon(path string) error
 
+	// SetTitle sets the window caption at the top of the window border. This is
+	// not visible in fullscreen mode.
+	SetTitle(title string)
+
 	// Size returns the window's size in pixels.
 	Size() (width, height int)
 
