@@ -236,6 +236,10 @@ func (s *editorState) generateFrame(frameIndex int) Gameboy {
 			currentIndex++
 			s.updateGameboy(&gb, currentIndex)
 			s.frameCache.set(currentIndex, gb)
+			if currentIndex%keyFrameInterval == 0 &&
+				currentIndex/keyFrameInterval == len(s.keyFrameStates) {
+				s.keyFrameStates = append(s.keyFrameStates, gb)
+			}
 		}
 		return gb
 	}
@@ -273,6 +277,10 @@ func (s *editorState) generateFrame(frameIndex int) Gameboy {
 		s.updateGameboy(&gb, currentIndex+1)
 		currentIndex++
 		s.frameCache.set(currentIndex, gb)
+		if currentIndex%keyFrameInterval == 0 &&
+			currentIndex/keyFrameInterval == len(s.keyFrameStates) {
+			s.keyFrameStates = append(s.keyFrameStates, gb)
+		}
 	}
 
 	return gb
