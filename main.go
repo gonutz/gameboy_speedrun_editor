@@ -76,15 +76,25 @@ func main() {
 		controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
 
 		// When saving/loading a file, we return from the current frame,
-		// otherwise the last event from the dialog (like pressing Escape or
-		// double-clicking) will be forwarded to our editor.
+		// otherwise the last event from the dialog (like pressing Escape) will
+		// be forwarded to our editor. The one exception is the double-click.
+		// See the comment on waitForLeftMouseRelease.
 		if controlDown && window.WasKeyPressed(draw.KeyS) {
-			state.saveFile()
+			err := state.saveFile()
+			if err != nil {
+				state.setWarning(err.Error())
+				state.render()
+			}
+			state.waitForLeftMouseRelease = true
 			return
 		}
 		if controlDown && window.WasKeyPressed(draw.KeyO) {
-			state.openFile()
+			err := state.openFile()
+			if err != nil {
+				state.setWarning(err.Error())
+			}
 			state.render()
+			state.waitForLeftMouseRelease = true
 			return
 		}
 
@@ -150,6 +160,14 @@ type editorState struct {
 	lastWindowW  int
 	lastWindowH  int
 	fullscreen   bool
+	// waitForLeftMouseRelease is a hack to fix an issue after opening a load or
+	// save dialog. Double clicking a file in those dialogs will trigger on the
+	// second time the mouse button goes down. It will thus still be down when
+	// we get back to our editor. This means window.IsMouseDown(draw.LeftButton)
+	// will be true after that double-click, resulting in an unwanted selection
+	// in the editor. This flag tells the editor to wait for a mouse up event
+	// before accepting a new mouse down event.
+	waitForLeftMouseRelease bool
 
 	// dragStart... are for dragging frame inputs.
 	dragStartFrame     int
@@ -637,7 +655,11 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	windowW, windowH := window.Size()
 	mouseX, mouseY := window.MousePosition()
 	rightMouseButtonDown := window.IsMouseDown(draw.RightButton)
-	leftMouseButtonDown := window.IsMouseDown(draw.LeftButton)
+
+	leftDown := window.IsMouseDown(draw.LeftButton)
+	state.waitForLeftMouseRelease = state.waitForLeftMouseRelease && leftDown
+	leftMouseButtonDown := leftDown && !state.waitForLeftMouseRelease
+
 	leftClick := wasLeftClicked(window)
 	shiftDown := window.IsKeyDown(draw.KeyLeftShift) || window.IsKeyDown(draw.KeyRightShift)
 	controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
@@ -1158,7 +1180,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			textW, textH := window.GetScaledTextSize(state.infoText, infoTextScale)
 			textX := windowW - textW
 			textY := windowH - textH
-			window.FillRect(textX-1, textY-1, windowW, windowH, draw.RGBA(0, 0, 0, 0.8))
+			window.FillRect(textX-1, textY-1, textW+2, textH+2, draw.RGBA(0, 0, 0, 0.8))
 			window.DrawScaledText(state.infoText, textX, textY, infoTextScale, state.infoTextColor)
 		}
 	}
@@ -1292,7 +1314,11 @@ func (s *editorState) openFile() error {
 		return nil
 	}
 
-	return s.open(path)
+	err = s.open(path)
+	if err != nil {
+		return fmt.Errorf("failed to load '%s': %w", path, err)
+	}
+	return nil
 }
 
 func (s *editorState) open(path string) error {
@@ -1381,7 +1407,19 @@ func (s *editorState) open(path string) error {
 	s.defaultInputs = defaultInputsTemp
 	s.frameInputs = frameInputsTemp
 	s.keyFrameStates = keyFrameStatesTemp
+
 	s.frameCache.clear()
+	s.dragStartFrame = -1
+	s.doubleClickPending = false
+	s.controlWasDown = false
+	s.keyRepeatCountdown = 0
+	s.draggingFrameIndex = -1
+	s.lastLeftClick = mouseClick{}
+	s.lastAction = inputAction{}
+	s.replayingGame = false
+	s.replayPaused = false
+	s.infoText = ""
+
 	return nil
 }
 
@@ -1407,7 +1445,11 @@ func (s *editorState) saveFile() error {
 		path += ".speedrun"
 	}
 
-	return s.save(path)
+	err = s.save(path)
+	if err != nil {
+		return fmt.Errorf("failed to save '%s': %w", path, err)
+	}
+	return nil
 }
 
 func (s *editorState) save(path string) error {
