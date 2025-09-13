@@ -73,6 +73,21 @@ func main() {
 			window.SetFullscreen(state.fullscreen)
 		}
 
+		controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
+
+		// When saving/loading a file, we return from the current frame,
+		// otherwise the last event from the dialog (like pressing Escape or
+		// double-clicking) will be forwarded to our editor.
+		if controlDown && window.WasKeyPressed(draw.KeyS) {
+			state.saveFile()
+			return
+		}
+		if controlDown && window.WasKeyPressed(draw.KeyO) {
+			state.openFile()
+			state.render()
+			return
+		}
+
 		goToEditor := state.replayingGame && window.WasKeyPressed(draw.KeyEscape)
 		if goToEditor {
 			state.replayingGame = false
@@ -1266,17 +1281,34 @@ func lastSessionPath() string {
 	return filepath.Join(os.Getenv("APPDATA"), "gameboy.speedrun")
 }
 
-func (s *editorState) loadLastSpeedrun() {
-	data, err := os.ReadFile(lastSessionPath())
+func (s *editorState) openFile() error {
+	path, err := dialog.File().
+		Title("Load Speedrun").
+		Filter("GameBoy Speedrun", "speedrun").
+		Load()
+
 	if err != nil {
-		return
+		// User cancelled the dialog.
+		return nil
+	}
+
+	return s.open(path)
+}
+
+func (s *editorState) open(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
 	}
 
 	rest := data
-	loadFailed := false
+	var loadErr error
 	n := func() int {
-		if loadFailed || len(rest) < 4 {
-			loadFailed = true
+		if loadErr != nil {
+			return 0
+		}
+		if len(rest) < 4 {
+			loadErr = fmt.Errorf("short read: only %d bytes left trying to read a 4 byte integer", len(rest))
 			return 0
 		}
 		n := binary.LittleEndian.Uint32(rest)
@@ -1284,8 +1316,11 @@ func (s *editorState) loadLastSpeedrun() {
 		return int(n)
 	}
 	b := func() byte {
-		if loadFailed || len(rest) < 1 {
-			loadFailed = true
+		if loadErr != nil {
+			return 0
+		}
+		if len(rest) < 1 {
+			loadErr = fmt.Errorf("short read: no bytes left trying to read a single byte")
 			return 0
 		}
 		b := rest[0]
@@ -1293,22 +1328,24 @@ func (s *editorState) loadLastSpeedrun() {
 		return b
 	}
 	v := func(x any) {
-		if !loadFailed {
-			r := bytes.NewReader(rest)
-			lenBeforeRead := r.Len()
-			err := binary.Read(r, binary.LittleEndian, x)
-			if err != nil {
-				loadFailed = true
-			} else {
-				readCount := lenBeforeRead - r.Len()
-				rest = rest[readCount:]
-			}
+		if loadErr != nil {
+			return
+		}
+
+		r := bytes.NewReader(rest)
+		lenBeforeRead := r.Len()
+		err := binary.Read(r, binary.LittleEndian, x)
+		if err != nil {
+			loadErr = err
+		} else {
+			readCount := lenBeforeRead - r.Len()
+			rest = rest[readCount:]
 		}
 	}
 
 	if n() != sessionFileVersion {
 		// We currently only read the very lastest file version.
-		return
+		return fmt.Errorf("unsupport file version")
 	}
 	leftMostFrameTemp := n()
 	activeSelectionFirstTemp := n()
@@ -1334,9 +1371,8 @@ func (s *editorState) loadLastSpeedrun() {
 		}
 	}
 
-	if loadFailed {
-		fmt.Println("loading failed")
-		return
+	if loadErr != nil {
+		return loadErr
 	}
 
 	s.leftMostFrame = leftMostFrameTemp
@@ -1346,9 +1382,35 @@ func (s *editorState) loadLastSpeedrun() {
 	s.frameInputs = frameInputsTemp
 	s.keyFrameStates = keyFrameStatesTemp
 	s.frameCache.clear()
+	return nil
 }
 
-func (s *editorState) saveCurrentSpeedrun() {
+func (s *editorState) loadLastSpeedrun() {
+	err := s.open(lastSessionPath())
+	if err != nil {
+		fmt.Println("loading last session failed:", err)
+	}
+}
+
+func (s *editorState) saveFile() error {
+	path, err := dialog.File().
+		Title("Save Speedrun").
+		Filter("GameBoy Speedrun", "speedrun").
+		Save()
+
+	if err != nil {
+		// User cancelled the dialog.
+		return nil
+	}
+
+	if !strings.HasSuffix(strings.ToLower(path), ".speedrun") {
+		path += ".speedrun"
+	}
+
+	return s.save(path)
+}
+
+func (s *editorState) save(path string) error {
 	// Create a buffer and helper functions:
 	// n() saves a number as uint32
 	// b() saves a single byte
@@ -1387,10 +1449,17 @@ func (s *editorState) saveCurrentSpeedrun() {
 		v(s)
 	}
 
-	setErr(os.WriteFile(lastSessionPath(), buf.Bytes(), 0666))
+	if saveErr == nil {
+		setErr(os.WriteFile(path, buf.Bytes(), 0666))
+	}
 
-	if saveErr != nil {
-		fmt.Println("error saving session file:", saveErr)
+	return saveErr
+}
+
+func (s *editorState) saveCurrentSpeedrun() {
+	err := s.save(lastSessionPath())
+	if err != nil {
+		fmt.Println("saving current session failed:", err)
 	}
 }
 
