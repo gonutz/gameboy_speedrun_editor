@@ -206,6 +206,7 @@ func RunWindow(title string, width, height int, update UpdateFunction) error {
 		UsagePage: 0x01,
 		Usage:     0x06,
 		Target:    window,
+		Flags:     w32.RIDEV_INPUTSINK,
 	}) {
 		return errors.New("RegisterRawInputDevices failed")
 	}
@@ -394,6 +395,7 @@ type window struct {
 	backlog       []float32
 	backlogType   shape
 	iconPath      string
+	active        bool
 }
 
 type shape int
@@ -461,6 +463,11 @@ func handleMessage(window w32.HWND, msg uint32, w, l uintptr) uintptr {
 		return 0
 	case w32.WM_MOUSEHWHEEL:
 		globalWindow.wheelX += float64(int16(w32.HIWORD(uint32(w)))) / 120.0
+		return 0
+	case w32.WM_ACTIVATE:
+		if globalWindow != nil {
+			globalWindow.active = w&0xFFFF != 0
+		}
 		return 0
 	case w32.WM_DESTROY:
 		if globalWindow != nil {
@@ -665,6 +672,9 @@ func disableFullscreen(window w32.HWND, placement w32.WINDOWPLACEMENT) {
 }
 
 func (w *window) WasKeyPressed(key Key) bool {
+	if !w.active {
+		return false
+	}
 	for _, pressed := range w.pressed {
 		if pressed == key {
 			return true
@@ -674,7 +684,7 @@ func (w *window) WasKeyPressed(key Key) bool {
 }
 
 func (w *window) IsKeyDown(key Key) bool {
-	if key < 0 || key >= keyCount {
+	if key < 0 || key >= keyCount || !w.active {
 		return false
 	}
 	return w.keyDown[key]
