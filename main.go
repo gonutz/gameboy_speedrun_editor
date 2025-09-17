@@ -1040,7 +1040,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		state.render()
 	}
 
-	if state.screenDirty {
+	if state.screenDirty || window.NeedsReRendering() {
 		state.screenDirty = false
 
 		// We need to create the Gameboy screens for these frames:

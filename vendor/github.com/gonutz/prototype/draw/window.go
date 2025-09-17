@@ -67,6 +67,11 @@ type Window interface {
 	// through SetFullscreen.
 	IsFullscreen() bool
 
+	// NeedsReRendering returns true after the graphics state was reset, e.g. on
+	// Windows after you go to the Ctrl+Alt+Del menu and back to the game. The
+	// screen needs to be re-rendered in that case or it will stay black.
+	NeedsReRendering() bool
+
 	// ShowCursor set the OS' mouse cursor to visible or invisible. It defaults
 	// to visible if you do not call ShowCursor.
 	ShowCursor(show bool)

@@ -283,6 +283,19 @@ func RunWindow(title string, width, height int, update UpdateFunction) error {
 	// what D3D9 reports; we could measure some frames and estimate the actual
 	// refresh rate, then compensate for it
 
+	releaseResourcesAfterDeviceLoss := func() {
+		for _, tex := range globalWindow.textures {
+			if tex.sysTexture != nil {
+				// TODO The other TODO regarding the sysTexture makes us have to
+				// check for nil here. Once we have a sysTexture for every
+				// texture, we can remove the nil check.
+				tex.sysTexture.Release()
+			}
+			tex.texture.Release()
+		}
+		globalWindow.textures = make(map[string]sizedTexture)
+	}
+
 	deviceIsLost := false
 	defer setShowCursorCountTo(0)
 
@@ -298,6 +311,12 @@ func RunWindow(title string, width, height int, update UpdateFunction) error {
 				if err == nil {
 					deviceIsLost = false
 					setRenderState()
+					globalWindow.loadFontTexture()
+
+					globalWindow.needsReRender = true
+					for i := range globalWindow.keyDown {
+						globalWindow.keyDown[i] = false
+					}
 				}
 			}
 
@@ -328,6 +347,7 @@ func RunWindow(title string, width, height int, update UpdateFunction) error {
 				if presentErr := device.Present(r, r, 0, nil); presentErr != nil {
 					if presentErr.Code() == d3d9.ERR_DEVICELOST {
 						deviceIsLost = true
+						releaseResourcesAfterDeviceLoss()
 					} else {
 						return presentErr
 					}
@@ -396,6 +416,7 @@ type window struct {
 	backlogType   shape
 	iconPath      string
 	active        bool
+	needsReRender bool
 }
 
 type shape int
@@ -600,6 +621,12 @@ func (w *window) SetFullscreen(f bool) {
 	}
 
 	w.isFullscreen = f
+}
+
+func (w *window) NeedsReRendering() bool {
+	b := w.needsReRender
+	w.needsReRender = false
+	return b
 }
 
 func (w *window) IsFullscreen() bool {
@@ -1170,7 +1197,7 @@ func (w *window) loadFontTexture() error {
 		0,
 	)
 	if err != nil {
-		return errors.New("d3d9.Device.CreateTexture in POOL_DEFAULT: " + err.Error())
+		return errors.New("d3d9.Device.CreateTexture in POOL_MANAGED: " + err.Error())
 	}
 
 	rect, err := texture.LockRect(0, nil, d3d9.LOCK_DISCARD)
