@@ -37,8 +37,9 @@ var keyMap = map[draw.Key]Button{
 const (
 	windowTitle = "Gameboy Speedrun Editor"
 
-	keyFrameInterval   = 100
-	sessionFileVersion = 1
+	keyFrameInterval      = 100
+	minSessionFileVersion = 1
+	sessionFileVersion    = 2
 
 	textScale   = 0.8
 	fontHeight  = 13
@@ -56,13 +57,15 @@ func main() {
 		defer stopProfiling()
 	}
 
-	var err error
-	globalROM, err = getRom()
-	check(err)
-
 	state := newEditorState()
 	state.loadLastSpeedrun()
 	defer state.saveCurrentSpeedrun()
+
+	if len(globalROM) == 0 {
+		var err error
+		globalROM, err = getRom()
+		check(err)
+	}
 
 	check(draw.RunWindow(windowTitle, 1500, 800, func(window draw.Window) {
 		windowW, windowH := window.Size()
@@ -81,6 +84,18 @@ func main() {
 		// otherwise the last event from the dialog (like pressing Escape) will
 		// be forwarded to our editor. The one exception is the double-click.
 		// See the comment on waitForLeftMouseRelease.
+		if controlDown && window.WasKeyPressed(draw.KeyN) {
+			err := state.createNewSpeedrun()
+			if err != nil {
+				state.setWarning(err.Error())
+				state.render()
+			} else {
+				window.SetTitle(windowTitle)
+			}
+			state.render()
+			state.waitForLeftMouseRelease = true
+			return
+		}
 		if controlDown && window.WasKeyPressed(draw.KeyS) {
 			err := state.saveFile()
 			if err != nil {
@@ -200,6 +215,44 @@ type editorState struct {
 	infoTextColor draw.Color
 }
 
+func (s *editorState) inputsAt(frameIndex int) inputState {
+	s.createInputsUpTo(frameIndex)
+	return s.frameInputs[frameIndex]
+}
+
+func (s *editorState) createInputsUpTo(frameIndex int) {
+	for frameIndex >= len(s.frameInputs) {
+		s.frameInputs = append(s.frameInputs, s.defaultInputs)
+	}
+}
+
+func (s *editorState) reset() {
+	s.leftMostFrame = 0
+	s.activeSelection = frameSelection{}
+	s.frameInputs = s.frameInputs[:0]
+	s.defaultInputs = 0
+	s.keyFrameStates = s.keyFrameStates[:0]
+	s.frameCache.clear()
+	s.gameboyScreenBuffer = s.gameboyScreenBuffer[:0]
+	s.screenBuffer = s.screenBuffer[:0]
+	s.screenDirty = true
+	s.dragStartFrame = -1
+	s.dragStartSelection = frameSelection{}
+	s.dragStartInputs = s.dragStartInputs[:0]
+	s.doubleClickPending = false
+	s.pendingDoubleClickFrame = -1
+	s.controlWasDown = false
+	s.keyRepeatCountdown = 0
+	s.draggingFrameIndex = -1
+	s.lastLeftClick = mouseClick{}
+	s.lastAction = inputAction{}
+	s.replayingGame = false
+	s.replayPaused = false
+	s.lastReplayPaused = false
+	s.lastReplayedFrame = -1
+	s.infoText = ""
+}
+
 func (s *editorState) setInfo(msg string) {
 	s.infoText = msg
 	s.infoTextColor = draw.RGBA(1, 1, 1, 1)
@@ -219,24 +272,7 @@ func (s *editorState) render() {
 }
 
 func (s *editorState) updateGameboy(gameboy *Gameboy, frameIndex int) {
-	var inputs inputState
-
-	if s.replayingGame {
-		// While in game if we have used up the last inputs, we forever
-		// press the default inputs.
-		if frameIndex < len(s.frameInputs) {
-			inputs = s.frameInputs[frameIndex]
-		} else {
-			inputs = s.defaultInputs
-		}
-	} else {
-		// In the editor, we extend the frame inputs of we reach their end.
-		for frameIndex >= len(s.frameInputs) {
-			s.frameInputs = append(s.frameInputs, s.defaultInputs)
-		}
-
-		inputs = s.frameInputs[frameIndex]
-	}
+	inputs := s.inputsAt(frameIndex)
 
 	for b := range buttonCount {
 		if isButtonDown(inputs, b) {
@@ -345,36 +381,32 @@ func (s *editorState) setDirtyFrame(frameIndex int) {
 	s.frameCache.removeFramesStartingAt(frameIndex)
 }
 
-// TODO Possible optimization: give toggleButton a range instead of a single
-// frame to not have to call setDirtyFrame all the time. This will be useful for
-// the editor, where we change buttons on multiple frames at once.
-func (state *editorState) toggleButton(frameIndex int, button Button) {
-	for frameIndex >= len(state.frameInputs) {
-		state.frameInputs = append(state.frameInputs, state.defaultInputs)
+func (s *editorState) setInputsRange(firstFrameIndex, lastFrameIndex int, setTo inputState) {
+	s.createInputsUpTo(lastFrameIndex)
+	for i := firstFrameIndex; i <= lastFrameIndex; i++ {
+		s.frameInputs[i] = setTo
 	}
+	s.setDirtyFrame(firstFrameIndex)
+}
 
-	toggleButton(&state.frameInputs[frameIndex], button)
-	state.setDirtyFrame(frameIndex)
+func (s *editorState) toggleButton(frameIndex int, button Button) {
+	s.createInputsUpTo(frameIndex)
+	toggleButton(&s.frameInputs[frameIndex], button)
+	s.setDirtyFrame(frameIndex)
 }
 
 func (s *editorState) isButtonDown(frameIndex int, button Button) bool {
-	if frameIndex < len(s.frameInputs) {
-		return isButtonDown(s.frameInputs[frameIndex], button)
-	}
-	return isButtonDown(s.defaultInputs, button)
+	return isButtonDown(s.inputsAt(frameIndex), button)
 }
 
-func (state *editorState) setButtonDown(frameIndex, count int, button Button, down bool) {
-	end := frameIndex + count - 1
-	for end >= len(state.frameInputs) {
-		state.frameInputs = append(state.frameInputs, state.defaultInputs)
-	}
+func (s *editorState) setButtonDown(frameIndex, count int, button Button, down bool) {
+	s.createInputsUpTo(frameIndex + count - 1)
 
 	for i := range count {
-		setButtonDown(&state.frameInputs[frameIndex+i], button, down)
+		setButtonDown(&s.frameInputs[frameIndex+i], button, down)
 	}
 
-	state.setDirtyFrame(frameIndex)
+	s.setDirtyFrame(frameIndex)
 }
 
 func (state *editorState) executeReplayFrame(window draw.Window) {
@@ -483,10 +515,7 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	window.DrawImageFileTo("gameboyScreen", screenX, screenY, screenW, screenH, 0)
 
 	// Draw the inputs as a menu.
-	inputs := state.defaultInputs
-	if state.lastReplayedFrame < len(state.frameInputs) {
-		inputs = state.frameInputs[state.lastReplayedFrame]
-	}
+	inputs := state.inputsAt(state.lastReplayedFrame)
 
 	const (
 		abButtonSize   = 75
@@ -846,8 +875,6 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		}
 	}
 
-	// TODO Think about shrinking state.frameInputs at the end when it has only
-	// empty inputs or maybe if it has only the default inputs?
 	if window.WasKeyPressed(draw.KeyEnd) {
 		if shiftDown {
 			state.activeSelection.last = len(state.frameInputs) - 1
@@ -902,10 +929,10 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			// On double-click, select all frames left and right that have the
 			// same button states.
 			a, b := frameUnderMouse, frameUnderMouse
-			for a-1 >= 0 && state.frameInputs[a-1] == state.frameInputs[a] {
+			for a-1 >= 0 && state.inputsAt(a-1) == state.inputsAt(a) {
 				a--
 			}
-			for b+1 < len(state.frameInputs) && state.frameInputs[b+1] == state.frameInputs[b] {
+			for b+1 < len(state.frameInputs) && state.inputsAt(b+1) == state.inputsAt(b) {
 				b++
 			}
 			state.activeSelection.first = a
@@ -944,10 +971,11 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 
 	if window.WasKeyPressed(draw.KeyBackspace) ||
 		window.WasKeyPressed(draw.KeyDelete) {
-		for i := state.activeSelection.start(); i < state.activeSelection.end(); i++ {
-			state.frameInputs[i] = 0
-		}
-		state.setDirtyFrame(state.activeSelection.start())
+		state.setInputsRange(
+			state.activeSelection.start(),
+			state.activeSelection.end()-1,
+			0,
+		)
 		state.render()
 	}
 
@@ -978,9 +1006,6 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 				}
 			} else if singleFrameSelected {
 				// Toggle button for the active frame.
-				for state.activeSelection.first+repeatCount > len(state.frameInputs) {
-					state.frameInputs = append(state.frameInputs, state.defaultInputs)
-				}
 				state.setButtonDown(state.activeSelection.first, repeatCount, b, down)
 
 				state.lastAction = inputAction{
@@ -1067,7 +1092,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			for frameX := range frameCountX {
 				screenOffsetX := frameX*frameWidth + 1
 				screenOffsetY := frameY*frameHeight + fontHeight
-				inputs := state.frameInputs[frameIndex]
+				inputs := state.inputsAt(frameIndex)
 
 				// Determine color by button state for this frame.
 				borderColor := draw.RGBA(0, 0, 0, 1)
@@ -1235,6 +1260,8 @@ func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelec
 	newStart := state.activeSelection.start()
 	newEnd := state.activeSelection.end() - 1
 
+	state.createInputsUpTo(max(dragEnd, newEnd))
+
 	var leftFill inputState
 	if dragStart > 0 {
 		leftFill = state.dragStartInputs[dragStart-1]
@@ -1248,11 +1275,7 @@ func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelec
 	for i := range dragCount {
 		src := dragStart + i
 		dest := newStart + i
-		if dest < len(state.frameInputs) {
-			state.frameInputs[dest] = state.dragStartInputs[src]
-		} else {
-			state.frameInputs = append(state.frameInputs, state.dragStartInputs[src])
-		}
+		state.frameInputs[dest] = state.dragStartInputs[src]
 	}
 
 	for i := dragStart; i < newStart; i++ {
@@ -1305,6 +1328,53 @@ func (s *frameSelection) count() int {
 
 func lastSessionPath() string {
 	return filepath.Join(os.Getenv("APPDATA"), "gameboy.speedrun")
+}
+
+func (s *editorState) createNewSpeedrun() error {
+	path, err := dialog.File().
+		Title("Load GameBoy ROM File").
+		Filter("GameBoy ROM", "gb", "gbc", "bin", "speedrun").
+		Load()
+
+	if err != nil {
+		// User cancelled the dialog.
+		return nil
+	}
+
+	if strings.HasSuffix(strings.ToLower(path), ".speedrun") {
+		// Load game from a speedrun file. This has to be a file version that
+		// includes the game.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		if len(data) < 8 {
+			return fmt.Errorf("invalid speedrun file (too short)")
+		}
+
+		fileVersion := binary.LittleEndian.Uint32(data)
+		if fileVersion < 2 {
+			return fmt.Errorf("speedrun file version does not contain Gameboy ROM")
+		}
+
+		romSize := binary.LittleEndian.Uint32(data[4:])
+		if len(data) < int(8+romSize) {
+			return fmt.Errorf("corrupt speedrun file (incomplete Gameboy ROM)")
+		}
+
+		globalROM = slices.Clone(data[8 : 8+romSize])
+	} else {
+		// Load a Gameboy ROM.
+		rom, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		globalROM = rom
+	}
+
+	s.reset()
+	return nil
 }
 
 func (s *editorState) openFile() (string, error) {
@@ -1374,10 +1444,30 @@ func (s *editorState) open(path string) error {
 		}
 	}
 
-	if n() != sessionFileVersion {
-		// We currently only read the very lastest file version.
-		return fmt.Errorf("unsupport file version")
+	fileVersion := n()
+
+	if !(minSessionFileVersion <= fileVersion && fileVersion <= sessionFileVersion) {
+		if minSessionFileVersion == sessionFileVersion {
+			return fmt.Errorf(
+				"unsupport file version, found %d but only support version %d",
+				fileVersion,
+				sessionFileVersion,
+			)
+		}
+		return fmt.Errorf(
+			"unsupport file version, found %d but only support versions %d to %d",
+			fileVersion,
+			minSessionFileVersion,
+			sessionFileVersion,
+		)
 	}
+
+	if fileVersion == 2 {
+		romSize := n()
+		globalROM = make([]byte, romSize)
+		v(globalROM)
+	}
+
 	leftMostFrameTemp := n()
 	activeSelectionFirstTemp := n()
 	activeSelectionLastTemp := n()
@@ -1481,6 +1571,8 @@ func (s *editorState) save(path string) error {
 
 	// Serialize the data.
 	n(sessionFileVersion)
+	n(len(globalROM))
+	v(globalROM)
 	n(s.leftMostFrame)
 	n(s.activeSelection.first)
 	n(s.activeSelection.last)
