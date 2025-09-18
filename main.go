@@ -47,6 +47,18 @@ const (
 	frameHeight = fontHeight + ScreenHeight + 1
 
 	infoTextScale = 2 * textScale
+
+	inputMenuW       = 220
+	inputMenuMargin  = 20
+	abButtonSize     = 75
+	hoverMargin      = 10
+	frameNumberScale = 1.9
+
+	abButtonSpaceX         = abButtonSize / 8
+	dpadButtonSize         = abButtonSize * 7 / 10
+	startButtonW           = abButtonSize
+	startButtonH           = abButtonSize / 3
+	startSelectButtonDistX = startButtonH / 2
 )
 
 func main() {
@@ -67,7 +79,7 @@ func main() {
 		check(err)
 	}
 
-	check(draw.RunWindow(windowTitle, 1500, 800, func(window draw.Window) {
+	check(draw.RunWindow(windowTitle, 1540, 800, func(window draw.Window) {
 		windowW, windowH := window.Size()
 		defer func() {
 			state.lastWindowW, state.lastWindowH = windowW, windowH
@@ -411,8 +423,6 @@ func (s *editorState) setButtonDown(frameIndex, count int, button Button, down b
 
 func (state *editorState) executeReplayFrame(window draw.Window) {
 	windowW, windowH := window.Size()
-	mouseX, mouseY := window.MousePosition()
-	leftClick := wasLeftClicked(window)
 
 	if window.WasKeyPressed(draw.KeySpace) {
 		state.replayPaused = !state.replayPaused
@@ -499,11 +509,6 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 
 	window.FillRect(0, 0, windowW, windowH, toColor(ColorPalette[3]))
 
-	const (
-		inputMenuW      = 220
-		inputMenuMargin = 20
-	)
-
 	// Letterbox the Gameboy screen into our window.
 	xScale := float64(windowW-inputMenuW-inputMenuMargin) / ScreenWidth
 	yScale := float64(windowH) / ScreenHeight
@@ -516,22 +521,31 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 
 	// Draw the inputs as a menu.
 	inputs := state.inputsAt(state.lastReplayedFrame)
+	inputMenuX := screenX + screenW + inputMenuMargin
+	frameNumber := fmt.Sprintf("Frame %d", state.lastReplayedFrame)
+	buttonCallback := func(button Button) {
+		state.toggleButton(state.lastReplayedFrame, button)
+	}
+	renderInputMenu(window, inputs, inputMenuX, frameNumber, buttonCallback)
+}
 
-	const (
-		abButtonSize   = 75
-		abButtonSpaceX = abButtonSize / 8
-		hoverMargin    = 10
-	)
+func renderInputMenu(
+	window draw.Window,
+	inputs inputState,
+	inputMenuX int,
+	frameNumber string,
+	buttonCallback func(button Button),
+) {
+	_, windowH := window.Size()
+	mouseX, mouseY := window.MousePosition()
+	leftClick := wasLeftClicked(window)
 
 	_, baseFontHeight := window.GetTextSize("|")
 	hoverColor := draw.RGBA(0, 0.5, 0, 0.3)
 
 	// Clear the menu background.
-	inputMenuX := screenX + screenW + inputMenuMargin
 	window.FillRect(inputMenuX, 0, inputMenuW, windowH, rgb(224, 248, 208))
 
-	const frameNumberScale = 1.9
-	frameNumber := fmt.Sprintf("Frame %d", state.lastReplayedFrame)
 	frameNumberW, _ := window.GetScaledTextSize(frameNumber, frameNumberScale)
 	frameNumberX := inputMenuX + (inputMenuW-frameNumberW)/2
 	window.DrawScaledText(frameNumber, frameNumberX, 0, frameNumberScale, draw.Black)
@@ -568,7 +582,7 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 				hoverColor,
 			)
 			if leftClick {
-				state.toggleButton(state.lastReplayedFrame, button)
+				buttonCallback(button)
 			}
 		}
 	}
@@ -582,7 +596,6 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	drawAB(rect(bButtonX, bButtonY, abButtonSize, abButtonSize), "B", ButtonB)
 
 	// Draw the D-Pad.
-	const dpadButtonSize = abButtonSize * 7 / 10
 	dpadX := inputMenuX + (inputMenuW-3*dpadButtonSize)/2
 	dpadY := bButtonY + abButtonSize + dpadButtonSize
 	window.FillRect(
@@ -620,7 +633,7 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 		if hoveringOverButton {
 			outerR.fill(window, hoverColor)
 			if leftClick {
-				state.toggleButton(state.lastReplayedFrame, button)
+				buttonCallback(button)
 			}
 		}
 	}
@@ -655,16 +668,11 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 		if r.contains(mouseX, mouseY) {
 			r.expand(10).fill(window, hoverColor)
 			if leftClick {
-				state.toggleButton(state.lastReplayedFrame, button)
+				buttonCallback(button)
 			}
 		}
 	}
 
-	const (
-		startButtonW           = abButtonSize
-		startButtonH           = abButtonSize / 3
-		startSelectButtonDistX = startButtonH / 2
-	)
 	selectButtonX := inputMenuX + (inputMenuW-2*startButtonW-startSelectButtonDistX)/2
 	startButtonX := selectButtonX + startButtonW + startSelectButtonDistX
 	startButtonY := dpadY + 4*dpadButtonSize
@@ -697,7 +705,8 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	shiftDown := window.IsKeyDown(draw.KeyLeftShift) || window.IsKeyDown(draw.KeyRightShift)
 	controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
 	altDown := window.IsKeyDown(draw.KeyLeftAlt) || window.IsKeyDown(draw.KeyRightAlt)
-	frameCountX := windowW / frameWidth
+	inputMenuX := windowW - inputMenuW - inputMenuMargin
+	frameCountX := inputMenuX / frameWidth
 	frameCountY := windowH / frameHeight
 	lastLeftMostFrame := state.leftMostFrame
 	lastActiveSelection := state.activeSelection
@@ -979,62 +988,75 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		state.render()
 	}
 
-	for key, b := range keyMap {
-		if window.WasKeyPressed(key) {
-			state.resetInfoText()
+	buttonWasPressed := func(button Button) {
+		state.resetInfoText()
 
-			firstFrameIndex := state.activeSelection.start()
-			down := !state.isButtonDown(firstFrameIndex, b)
+		firstFrameIndex := state.activeSelection.start()
+		down := !state.isButtonDown(firstFrameIndex, button)
 
-			singleFrameSelected := state.activeSelection.first == state.activeSelection.last
+		singleFrameSelected := state.activeSelection.first == state.activeSelection.last
 
-			if shiftDown && singleFrameSelected {
-				// Toggle button for all the future if we do not overwrite any
-				// existing future button of this kind.
-				// TODO Allow toggling even though the button is pressed in the
-				// future already.
-				canToggle := true
-				for i := firstFrameIndex + 2; i < len(state.frameInputs); i++ {
-					canToggle = canToggle && state.isButtonDown(i, b) == state.isButtonDown(i-1, b)
-				}
-
-				if canToggle {
-					state.setButtonDown(firstFrameIndex, len(state.frameInputs)-firstFrameIndex, b, down)
-					setButtonDown(&state.defaultInputs, b, down)
-				} else {
-					state.setWarning("Cannot toggle button, it is already used in the future.")
-				}
-			} else if singleFrameSelected {
-				// Toggle button for the active frame.
-				state.setButtonDown(state.activeSelection.first, repeatCount, b, down)
-
-				state.lastAction = inputAction{
-					valid:      true,
-					frameIndex: state.activeSelection.first,
-					button:     b,
-					down:       down,
-					count:      repeatCount,
-				}
-
-				state.activeSelection.first = state.lastAction.frameIndex
-				state.activeSelection.last = state.lastAction.frameIndex + state.lastAction.count - 1
-			} else {
-				// We have multiple frames selected.
-				state.setButtonDown(state.activeSelection.start(), state.activeSelection.count(), b, down)
-				state.lastAction = inputAction{
-					valid:      true,
-					frameIndex: state.activeSelection.start(),
-					button:     b,
-					down:       down,
-					count:      state.activeSelection.count(),
-				}
+		if shiftDown && singleFrameSelected {
+			// Toggle button for all the future if we do not overwrite any
+			// existing future button of this kind.
+			// TODO Allow toggling even though the button is pressed in the
+			// future already.
+			canToggle := true
+			for i := firstFrameIndex + 2; i < len(state.frameInputs); i++ {
+				canToggle = canToggle && state.isButtonDown(i, button) == state.isButtonDown(i-1, button)
 			}
 
-			state.render()
+			if canToggle {
+				state.setButtonDown(firstFrameIndex, len(state.frameInputs)-firstFrameIndex, button, down)
+				setButtonDown(&state.defaultInputs, button, down)
+			} else {
+				state.setWarning("Cannot toggle button, it is already used in the future.")
+			}
+		} else if singleFrameSelected {
+			// Toggle button for the active frame.
+			state.setButtonDown(state.activeSelection.first, repeatCount, button, down)
+
+			state.lastAction = inputAction{
+				valid:      true,
+				frameIndex: state.activeSelection.first,
+				button:     button,
+				down:       down,
+				count:      repeatCount,
+			}
+
+			state.activeSelection.first = state.lastAction.frameIndex
+			state.activeSelection.last = state.lastAction.frameIndex + state.lastAction.count - 1
+		} else {
+			// We have multiple frames selected.
+			state.setButtonDown(state.activeSelection.start(), state.activeSelection.count(), button, down)
+			state.lastAction = inputAction{
+				valid:      true,
+				frameIndex: state.activeSelection.start(),
+				button:     button,
+				down:       down,
+				count:      state.activeSelection.count(),
+			}
+		}
+
+		state.render()
+	}
+
+	for key, b := range keyMap {
+		if window.WasKeyPressed(key) {
+			buttonWasPressed(b)
 		}
 	}
 
 	// Render the state.
+
+	// Render the menu first.
+	renderInputMenu(
+		window,
+		state.inputsAt(state.activeSelection.start()),
+		inputMenuX+inputMenuMargin,
+		"",
+		buttonWasPressed,
+	)
 
 	if state.lastWindowW != windowW || state.lastWindowH != windowH {
 		state.render()
@@ -1198,8 +1220,9 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			}
 		}
 
-		window.FillRect(frameCountX*frameWidth, 0, windowW, windowH, draw.Black)
-		window.FillRect(0, frameCountY*frameHeight, windowW, windowH, draw.Black)
+		right := frameCountX * frameWidth
+		window.FillRect(right, 0, inputMenuX+inputMenuMargin-right, windowH, draw.Black)
+		window.FillRect(0, frameCountY*frameHeight, inputMenuX+inputMenuMargin, windowH, draw.Black)
 
 		if state.infoText == "" && state.activeSelection.count() > 1 {
 			state.infoText = fmt.Sprintf("%d frames selected", state.activeSelection.count())
