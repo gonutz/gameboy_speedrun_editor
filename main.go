@@ -1230,7 +1230,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 
 		if state.infoText != "" {
 			textW, textH := window.GetScaledTextSize(state.infoText, infoTextScale)
-			textX := windowW - textW
+			textX := frameCountX*frameWidth - textW
 			textY := windowH - textH
 			window.FillRect(textX-1, textY-1, textW+2, textH+2, draw.RGBA(0, 0, 0, 0.8))
 			window.DrawScaledText(state.infoText, textX, textY, infoTextScale, state.infoTextColor)
