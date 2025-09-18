@@ -50,9 +50,9 @@ const (
 
 	inputMenuW       = 220
 	inputMenuMargin  = 20
-	abButtonSize     = 75
 	hoverMargin      = 10
 	frameNumberScale = 1.9
+	abButtonSize     = 75
 
 	abButtonSpaceX         = abButtonSize / 8
 	dpadButtonSize         = abButtonSize * 7 / 10
@@ -546,7 +546,7 @@ func renderInputMenu(
 	// Clear the menu background.
 	window.FillRect(inputMenuX, 0, inputMenuW, windowH, rgb(224, 248, 208))
 
-	frameNumberW, _ := window.GetScaledTextSize(frameNumber, frameNumberScale)
+	frameNumberW, frameNumberH := window.GetScaledTextSize(frameNumber, frameNumberScale)
 	frameNumberX := inputMenuX + (inputMenuW-frameNumberW)/2
 	window.DrawScaledText(frameNumber, frameNumberX, 0, frameNumberScale, draw.Black)
 
@@ -589,7 +589,7 @@ func renderInputMenu(
 
 	bButtonX := inputMenuX + (inputMenuW-(abButtonSize+abButtonSpaceX+abButtonSize))/2
 	aButtonX := bButtonX + abButtonSize + abButtonSpaceX
-	aButtonY := abButtonSize
+	aButtonY := frameNumberH * 3 / 2
 	bButtonY := aButtonY + abButtonSize/2
 
 	drawAB(rect(aButtonX, aButtonY, abButtonSize, abButtonSize), "A", ButtonA)
@@ -597,7 +597,7 @@ func renderInputMenu(
 
 	// Draw the D-Pad.
 	dpadX := inputMenuX + (inputMenuW-3*dpadButtonSize)/2
-	dpadY := bButtonY + abButtonSize + dpadButtonSize
+	dpadY := bButtonY + abButtonSize/2 + dpadButtonSize
 	window.FillRect(
 		dpadX+dpadButtonSize,
 		dpadY,
@@ -675,7 +675,7 @@ func renderInputMenu(
 
 	selectButtonX := inputMenuX + (inputMenuW-2*startButtonW-startSelectButtonDistX)/2
 	startButtonX := selectButtonX + startButtonW + startSelectButtonDistX
-	startButtonY := dpadY + 4*dpadButtonSize
+	startButtonY := dpadY + 3*dpadButtonSize + dpadButtonSize/2
 	startButtonRect := rect(startButtonX, startButtonY, startButtonW, startButtonH)
 	selectButtonRect := rect(selectButtonX, startButtonY, startButtonW, startButtonH)
 
