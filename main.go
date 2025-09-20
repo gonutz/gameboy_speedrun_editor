@@ -39,7 +39,7 @@ const (
 
 	keyFrameInterval      = 100
 	minSessionFileVersion = 1
-	sessionFileVersion    = 2
+	sessionFileVersion    = 3
 
 	textScale   = 0.8
 	fontHeight  = 13
@@ -163,6 +163,7 @@ func main() {
 
 func newEditorState() *editorState {
 	return &editorState{
+		branches:                make([]branch, 1),
 		dragStartFrame:          -1,
 		frameCache:              newFrameCache(),
 		pendingDoubleClickFrame: -1,
@@ -175,8 +176,8 @@ func newEditorState() *editorState {
 type editorState struct {
 	leftMostFrame   int
 	activeSelection frameSelection
-	frameInputs     []inputState // Holds the state of all the Gameboy buttons for each frame.
-	defaultInputs   inputState   // Button states for future frames that are not yet generated.
+	branches        []branch
+	branchIndex     int
 	// keyFrameStates are the states at every keyFrameInterval-th frame. The
 	// very first item in keyFrameStates is for frame 0.
 	keyFrameStates []Gameboy
@@ -227,22 +228,37 @@ type editorState struct {
 	infoTextColor draw.Color
 }
 
+type branch struct {
+	name          string
+	frameInputs   []inputState // Holds the state of all the Gameboy buttons for each frame.
+	defaultInputs inputState   // Button states for future frames that are not yet generated.
+}
+
+func (s *editorState) branch() *branch {
+	return &s.branches[s.branchIndex]
+}
+
 func (s *editorState) inputsAt(frameIndex int) inputState {
 	s.createInputsUpTo(frameIndex)
-	return s.frameInputs[frameIndex]
+	return s.branch().frameInputs[frameIndex]
 }
 
 func (s *editorState) createInputsUpTo(frameIndex int) {
-	for frameIndex >= len(s.frameInputs) {
-		s.frameInputs = append(s.frameInputs, s.defaultInputs)
+	b := s.branch()
+	for frameIndex >= len(b.frameInputs) {
+		b.frameInputs = append(b.frameInputs, b.defaultInputs)
 	}
 }
 
-func (s *editorState) reset() {
+func (s *editorState) resetForNewGame() {
 	s.leftMostFrame = 0
 	s.activeSelection = frameSelection{}
-	s.frameInputs = s.frameInputs[:0]
-	s.defaultInputs = 0
+	for i := range s.branches {
+		b := &s.branches[i]
+		b.frameInputs = b.frameInputs[:0]
+		b.defaultInputs = 0
+	}
+	s.branches = s.branches[:1]
 	s.keyFrameStates = s.keyFrameStates[:0]
 	s.frameCache.clear()
 	s.gameboyScreenBuffer = s.gameboyScreenBuffer[:0]
@@ -395,15 +411,18 @@ func (s *editorState) setDirtyFrame(frameIndex int) {
 
 func (s *editorState) setInputsRange(firstFrameIndex, lastFrameIndex int, setTo inputState) {
 	s.createInputsUpTo(lastFrameIndex)
+
+	b := s.branch()
 	for i := firstFrameIndex; i <= lastFrameIndex; i++ {
-		s.frameInputs[i] = setTo
+		b.frameInputs[i] = setTo
 	}
+
 	s.setDirtyFrame(firstFrameIndex)
 }
 
 func (s *editorState) toggleButton(frameIndex int, button Button) {
 	s.createInputsUpTo(frameIndex)
-	toggleButton(&s.frameInputs[frameIndex], button)
+	toggleButton(&s.branch().frameInputs[frameIndex], button)
 	s.setDirtyFrame(frameIndex)
 }
 
@@ -414,8 +433,9 @@ func (s *editorState) isButtonDown(frameIndex int, button Button) bool {
 func (s *editorState) setButtonDown(frameIndex, count int, button Button, down bool) {
 	s.createInputsUpTo(frameIndex + count - 1)
 
+	b := s.branch()
 	for i := range count {
-		setButtonDown(&s.frameInputs[frameIndex+i], button, down)
+		setButtonDown(&b.frameInputs[frameIndex+i], button, down)
 	}
 
 	s.setDirtyFrame(frameIndex)
@@ -526,10 +546,10 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	buttonCallback := func(button Button) {
 		state.toggleButton(state.lastReplayedFrame, button)
 	}
-	renderInputMenu(window, inputs, inputMenuX, frameNumber, buttonCallback)
+	state.renderMenu(window, inputs, inputMenuX, frameNumber, buttonCallback)
 }
 
-func renderInputMenu(
+func (state *editorState) renderMenu(
 	window draw.Window,
 	inputs inputState,
 	inputMenuX int,
@@ -681,6 +701,66 @@ func renderInputMenu(
 
 	drawStartSelect(startButtonRect, "Start", ButtonStart)
 	drawStartSelect(selectButtonRect, "sElect", ButtonSelect)
+
+	y := selectButtonRect.y + selectButtonRect.h + 10
+	for i, b := range state.branches {
+		name := b.name
+		if i == state.branchIndex {
+			name = ">" + name + "<"
+		}
+		textW, textH := window.GetScaledTextSize(name, frameNumberScale)
+		textX := inputMenuX + (inputMenuW-textW)/2
+		color := draw.Black
+		r := rect(textX, y, textW, textH)
+		if r.contains(mouseX, mouseY) {
+			color = draw.Gray
+		}
+		window.DrawScaledText(name, textX, y, frameNumberScale, color)
+		y += textH
+
+		if i != state.branchIndex && leftClick && r.contains(mouseX, mouseY) {
+			oldBranch := state.branch()
+			state.branchIndex = i
+			newBranch := state.branch()
+
+			end := min(
+				len(oldBranch.frameInputs),
+				len(newBranch.frameInputs),
+			)
+			dirty := end
+			for i := range end {
+				if oldBranch.frameInputs[i] != newBranch.frameInputs[i] {
+					dirty = i
+					break
+				}
+			}
+
+			state.setDirtyFrame(dirty)
+			state.render()
+		}
+	}
+
+	textW, textH := window.GetScaledTextSize("New Branch", frameNumberScale)
+	newBranchButton := rect(0, y, textW+20, textH+10)
+	newBranchButton.x = inputMenuX + (inputMenuW-newBranchButton.w)/2
+	color := draw.LightPurple
+	if newBranchButton.contains(mouseX, mouseY) {
+		color = draw.Purple
+	}
+	newBranchButton.fill(window, color)
+	textX := newBranchButton.x + (newBranchButton.w-textW)/2
+	textY := newBranchButton.y + (newBranchButton.h-textH)/2
+	window.DrawScaledText("New Branch", textX, textY, frameNumberScale, draw.Black)
+
+	if leftClick && newBranchButton.contains(mouseX, mouseY) {
+		b := state.branch()
+		state.branches = append(state.branches, branch{
+			name:          fmt.Sprintf("Branch %d", len(state.branches)+1),
+			frameInputs:   slices.Clone(b.frameInputs),
+			defaultInputs: b.defaultInputs,
+		})
+		state.branchIndex = len(state.branches) - 1
+	}
 }
 
 func wasLeftClicked(window draw.Window) bool {
@@ -867,7 +947,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			state.dragFrameInputsTo(selectionOffset, lastActiveSelection)
 		} else if altDown {
 			// Alt+Arrow Keys moves the selection around.
-			last := len(state.frameInputs) - 1
+			last := len(state.branch().frameInputs) - 1
 			state.activeSelection.first = max(0, min(last, state.activeSelection.first+frameDelta))
 			state.activeSelection.last = max(0, min(last, state.activeSelection.last+frameDelta))
 		} else {
@@ -886,9 +966,9 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 
 	if window.WasKeyPressed(draw.KeyEnd) {
 		if shiftDown {
-			state.activeSelection.last = len(state.frameInputs) - 1
+			state.activeSelection.last = len(state.branch().frameInputs) - 1
 		} else {
-			state.leftMostFrame = len(state.frameInputs) - frameCountX*frameCountY - 1
+			state.leftMostFrame = len(state.branch().frameInputs) - frameCountX*frameCountY - 1
 		}
 	}
 
@@ -941,7 +1021,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			for a-1 >= 0 && state.inputsAt(a-1) == state.inputsAt(a) {
 				a--
 			}
-			for b+1 < len(state.frameInputs) && state.inputsAt(b+1) == state.inputsAt(b) {
+			for b+1 < len(state.branch().frameInputs) && state.inputsAt(b+1) == state.inputsAt(b) {
 				b++
 			}
 			state.activeSelection.first = a
@@ -1002,13 +1082,13 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 			// TODO Allow toggling even though the button is pressed in the
 			// future already.
 			canToggle := true
-			for i := firstFrameIndex + 2; i < len(state.frameInputs); i++ {
+			for i := firstFrameIndex + 2; i < len(state.branch().frameInputs); i++ {
 				canToggle = canToggle && state.isButtonDown(i, button) == state.isButtonDown(i-1, button)
 			}
 
 			if canToggle {
-				state.setButtonDown(firstFrameIndex, len(state.frameInputs)-firstFrameIndex, button, down)
-				setButtonDown(&state.defaultInputs, button, down)
+				state.setButtonDown(firstFrameIndex, len(state.branch().frameInputs)-firstFrameIndex, button, down)
+				setButtonDown(&state.branch().defaultInputs, button, down)
 			} else {
 				state.setWarning("Cannot toggle button, it is already used in the future.")
 			}
@@ -1050,7 +1130,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	// Render the state.
 
 	// Render the menu first.
-	renderInputMenu(
+	state.renderMenu(
 		window,
 		state.inputsAt(state.activeSelection.start()),
 		inputMenuX+inputMenuMargin,
@@ -1244,7 +1324,7 @@ func (s *editorState) startDraggingFrameInputs(atFrame int) {
 	// Start dragging frame inputs around with keyboard or mouse.
 	s.dragStartFrame = atFrame
 	s.dragStartSelection = s.activeSelection
-	s.dragStartInputs = append(s.dragStartInputs[:0], s.frameInputs...)
+	s.dragStartInputs = append(s.dragStartInputs[:0], s.branch().frameInputs...)
 }
 
 func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelection frameSelection) {
@@ -1268,12 +1348,14 @@ func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelec
 	// the last action is the one that was being dragged.
 	state.lastAction.valid = false
 
+	branch := state.branch()
+
 	// Reset the input state to before the start of the drag.
-	copy(state.frameInputs, state.dragStartInputs)
+	copy(branch.frameInputs, state.dragStartInputs)
 	// There might be more frame inputs than before the drag, so fill those with
 	// the default input state.
-	for i := len(state.dragStartInputs); i < len(state.frameInputs); i++ {
-		state.frameInputs[i] = state.defaultInputs
+	for i := len(state.dragStartInputs); i < len(branch.frameInputs); i++ {
+		branch.frameInputs[i] = branch.defaultInputs
 	}
 
 	dragStart := state.dragStartSelection.start()
@@ -1290,7 +1372,7 @@ func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelec
 		leftFill = state.dragStartInputs[dragStart-1]
 	}
 
-	rightFill := state.defaultInputs
+	rightFill := branch.defaultInputs
 	if dragEnd+1 < len(state.dragStartInputs) {
 		rightFill = state.dragStartInputs[dragEnd+1]
 	}
@@ -1298,14 +1380,14 @@ func (state *editorState) dragFrameInputsTo(selectionOffset int, lastActiveSelec
 	for i := range dragCount {
 		src := dragStart + i
 		dest := newStart + i
-		state.frameInputs[dest] = state.dragStartInputs[src]
+		branch.frameInputs[dest] = state.dragStartInputs[src]
 	}
 
 	for i := dragStart; i < newStart; i++ {
-		state.frameInputs[i] = leftFill
+		branch.frameInputs[i] = leftFill
 	}
 	for i := dragEnd; i > newEnd; i-- {
-		state.frameInputs[i] = rightFill
+		branch.frameInputs[i] = rightFill
 	}
 
 	state.setDirtyFrame(min(dragStart, newStart, affectedFrame))
@@ -1396,7 +1478,7 @@ func (s *editorState) createNewSpeedrun() error {
 		globalROM = rom
 	}
 
-	s.reset()
+	s.resetForNewGame()
 	return nil
 }
 
@@ -1419,7 +1501,7 @@ func (s *editorState) openFile() (string, error) {
 	return path, nil
 }
 
-func (s *editorState) open(path string) error {
+func (state *editorState) open(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -1450,6 +1532,19 @@ func (s *editorState) open(path string) error {
 		b := rest[0]
 		rest = rest[1:]
 		return b
+	}
+	s := func() string {
+		length := n()
+		if loadErr != nil {
+			return ""
+		}
+		if length > len(rest) {
+			loadErr = fmt.Errorf("short read: string is longer than remaining bytes")
+			return ""
+		}
+		str := string(rest[:length])
+		rest = rest[length:]
+		return str
 	}
 	v := func(x any) {
 		if loadErr != nil {
@@ -1485,7 +1580,7 @@ func (s *editorState) open(path string) error {
 		)
 	}
 
-	if fileVersion == 2 {
+	if fileVersion >= 2 {
 		romSize := n()
 		globalROM = make([]byte, romSize)
 		v(globalROM)
@@ -1494,10 +1589,33 @@ func (s *editorState) open(path string) error {
 	leftMostFrameTemp := n()
 	activeSelectionFirstTemp := n()
 	activeSelectionLastTemp := n()
-	defaultInputsTemp := inputState(b())
-	frameInputsTemp := make([]inputState, n())
-	for i := range frameInputsTemp {
-		frameInputsTemp[i] = inputState(b())
+
+	branchIndexTemp := 0
+	var branchesTemp []branch
+	if fileVersion < 3 {
+		// There were no branches, so we map the frame inputs to a single
+		// branch.
+		branchesTemp = make([]branch, 1)
+		branch := &branchesTemp[0]
+		branch.name = "Branch 1"
+		branch.defaultInputs = inputState(b())
+		branch.frameInputs = make([]inputState, n())
+		for i := range branch.frameInputs {
+			branch.frameInputs[i] = inputState(b())
+		}
+	} else {
+		// This version supports multiple branches.
+		branchIndexTemp = n()
+		branchesTemp = make([]branch, n())
+		for i := range branchesTemp {
+			branch := &branchesTemp[i]
+			branch.name = s()
+			branch.defaultInputs = inputState(b())
+			branch.frameInputs = make([]inputState, n())
+			for i := range branch.frameInputs {
+				branch.frameInputs[i] = inputState(b())
+			}
+		}
 	}
 
 	haveKeyFrameInterval := n()
@@ -1515,28 +1633,35 @@ func (s *editorState) open(path string) error {
 		}
 	}
 
+	if !(0 <= branchIndexTemp && branchIndexTemp < len(branchesTemp)) {
+		loadErr = fmt.Errorf(
+			"invalid branch index %d %d branches exist",
+			branchIndexTemp, len(branchesTemp),
+		)
+	}
+
 	if loadErr != nil {
 		return loadErr
 	}
 
-	s.leftMostFrame = leftMostFrameTemp
-	s.activeSelection.first = activeSelectionFirstTemp
-	s.activeSelection.last = activeSelectionLastTemp
-	s.defaultInputs = defaultInputsTemp
-	s.frameInputs = frameInputsTemp
-	s.keyFrameStates = keyFrameStatesTemp
+	state.leftMostFrame = leftMostFrameTemp
+	state.activeSelection.first = activeSelectionFirstTemp
+	state.activeSelection.last = activeSelectionLastTemp
+	state.branchIndex = branchIndexTemp
+	state.branches = branchesTemp
+	state.keyFrameStates = keyFrameStatesTemp
 
-	s.frameCache.clear()
-	s.dragStartFrame = -1
-	s.doubleClickPending = false
-	s.controlWasDown = false
-	s.keyRepeatCountdown = 0
-	s.draggingFrameIndex = -1
-	s.lastLeftClick = mouseClick{}
-	s.lastAction = inputAction{}
-	s.replayingGame = false
-	s.replayPaused = false
-	s.infoText = ""
+	state.frameCache.clear()
+	state.dragStartFrame = -1
+	state.doubleClickPending = false
+	state.controlWasDown = false
+	state.keyRepeatCountdown = 0
+	state.draggingFrameIndex = -1
+	state.lastLeftClick = mouseClick{}
+	state.lastAction = inputAction{}
+	state.replayingGame = false
+	state.replayPaused = false
+	state.infoText = ""
 
 	return nil
 }
@@ -1570,7 +1695,7 @@ func (s *editorState) saveFile() error {
 	return nil
 }
 
-func (s *editorState) save(path string) error {
+func (state *editorState) save(path string) error {
 	// Create a buffer and helper functions:
 	// n() saves a number as uint32
 	// b() saves a single byte
@@ -1588,6 +1713,12 @@ func (s *editorState) save(path string) error {
 	b := func(b byte) {
 		setErr(buf.WriteByte(b))
 	}
+	s := func(s string) {
+		bytes := []byte(s)
+		n(len(bytes))
+		_, err := buf.Write(bytes)
+		setErr(err)
+	}
 	v := func(x any) {
 		setErr(binary.Write(&buf, binary.LittleEndian, x))
 	}
@@ -1596,19 +1727,25 @@ func (s *editorState) save(path string) error {
 	n(sessionFileVersion)
 	n(len(globalROM))
 	v(globalROM)
-	n(s.leftMostFrame)
-	n(s.activeSelection.first)
-	n(s.activeSelection.last)
-	b(byte(s.defaultInputs))
-	n(len(s.frameInputs))
-	for _, inputs := range s.frameInputs {
-		b(byte(inputs))
+	n(state.leftMostFrame)
+	n(state.activeSelection.first)
+	n(state.activeSelection.last)
+	n(state.branchIndex)
+	n(len(state.branches))
+	for i := range state.branches {
+		branch := &state.branches[i]
+		s(branch.name)
+		b(byte(branch.defaultInputs))
+		n(len(branch.frameInputs))
+		for _, inputs := range branch.frameInputs {
+			b(byte(inputs))
+		}
 	}
 	n(keyFrameInterval)
 	n(gameboyStateVersion)
-	n(len(s.keyFrameStates))
-	for _, s := range s.keyFrameStates {
-		v(s)
+	n(len(state.keyFrameStates))
+	for _, frame := range state.keyFrameStates {
+		v(frame)
 	}
 
 	if saveErr == nil {
@@ -1630,9 +1767,11 @@ func (state *editorState) checkFrames(upTo int) {
 
 	fmt.Println("checking states up to frame", upTo)
 
+	branch := state.branch()
+
 	wantGB := NewGameboy(globalROM, GameboyOptions{})
 	for i := range upTo + 1 {
-		inputs := state.frameInputs[i]
+		inputs := branch.frameInputs[i]
 
 		for b := range buttonCount {
 			if isButtonDown(inputs, b) {
@@ -1762,18 +1901,6 @@ func (c *frameCache) latestFrameUpTo(frameIndex int) (Gameboy, int) {
 	}
 
 	return c.gameboys[bestIndex], c.frameIndices[bestIndex]
-}
-
-func (c *frameCache) contains(frameIndex int) bool {
-	return slices.Contains(c.frameIndices, frameIndex)
-}
-
-func (c *frameCache) at(frameIndex int) Gameboy {
-	i := slices.Index(c.frameIndices, frameIndex)
-	if i == -1 {
-		return Gameboy{}
-	}
-	return c.gameboys[i]
 }
 
 func (c *frameCache) set(frameIndex int, gb Gameboy) {
