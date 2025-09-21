@@ -753,6 +753,55 @@ func (state *editorState) renderMenu(
 	const menuTextScale = 1.5
 
 	y := selectButtonRect.y + selectButtonRect.h + 10
+
+	button := func(text string) bool {
+		textW, textH := window.GetScaledTextSize(text, menuTextScale)
+		newBranchButton := rect(0, y, textW+20, textH+10)
+		newBranchButton.x = inputMenuX + (inputMenuW-newBranchButton.w)/2
+		color := draw.LightPurple
+		if newBranchButton.contains(mouseX, mouseY) {
+			color = draw.Purple
+		}
+		newBranchButton.fill(window, color)
+		textX := newBranchButton.x + (newBranchButton.w-textW)/2
+		textY := newBranchButton.y + (newBranchButton.h-textH)/2
+		window.DrawScaledText(text, textX, textY, menuTextScale, draw.Black)
+
+		y += newBranchButton.h + 2
+
+		return leftClick && newBranchButton.contains(mouseX, mouseY)
+	}
+
+	if button("New Branch") {
+		b := state.branch()
+		state.branches = append(state.branches, branch{
+			name:          fmt.Sprintf("Branch %d", len(state.branches)+1),
+			frameInputs:   slices.Clone(b.frameInputs),
+			defaultInputs: b.defaultInputs,
+		})
+		state.branchIndex = len(state.branches) - 1
+	}
+
+	if len(state.branches) > 1 && button("Delete Branch") {
+		skipConfirmation := false
+
+		// If the current branch is an exact copy of another branch, we delete
+		// it without asking confirmation because no progress is really lost.
+		for i := range state.branches {
+			if i != state.branchIndex &&
+				equalInputs(state.branches[i], state.branches[state.branchIndex]) {
+				skipConfirmation = true
+			}
+		}
+
+		msg := fmt.Sprintf("Do you really want to delete \"%s\"?", state.branch().name)
+
+		if skipConfirmation || dialog.Message(msg).YesNo() {
+			state.branches = slices.Delete(state.branches, state.branchIndex, state.branchIndex+1)
+			state.branchIndex = max(0, state.branchIndex-1)
+		}
+	}
+
 	for i, b := range state.branches {
 		name := b.name
 		if i == state.branchIndex {
@@ -789,41 +838,18 @@ func (state *editorState) renderMenu(
 			state.render()
 		}
 	}
+}
 
-	button := func(text string) bool {
-		textW, textH := window.GetScaledTextSize(text, menuTextScale)
-		newBranchButton := rect(0, y, textW+20, textH+10)
-		newBranchButton.x = inputMenuX + (inputMenuW-newBranchButton.w)/2
-		color := draw.LightPurple
-		if newBranchButton.contains(mouseX, mouseY) {
-			color = draw.Purple
+func equalInputs(a, b branch) bool {
+	if len(a.frameInputs) != len(b.frameInputs) {
+		return false
+	}
+	for i := range a.frameInputs {
+		if a.frameInputs[i] != b.frameInputs[i] {
+			return false
 		}
-		newBranchButton.fill(window, color)
-		textX := newBranchButton.x + (newBranchButton.w-textW)/2
-		textY := newBranchButton.y + (newBranchButton.h-textH)/2
-		window.DrawScaledText(text, textX, textY, menuTextScale, draw.Black)
-
-		y += newBranchButton.h + 2
-
-		return leftClick && newBranchButton.contains(mouseX, mouseY)
 	}
-
-	if button("New Branch") {
-		b := state.branch()
-		state.branches = append(state.branches, branch{
-			name:          fmt.Sprintf("Branch %d", len(state.branches)+1),
-			frameInputs:   slices.Clone(b.frameInputs),
-			defaultInputs: b.defaultInputs,
-		})
-		state.branchIndex = len(state.branches) - 1
-	}
-
-	if len(state.branches) > 1 && button("Delete Branch") {
-		// TODO Ask confirmation before doing this, BUT ONLY if the branch is
-		// not the same as another one.
-		state.branches = slices.Delete(state.branches, state.branchIndex, state.branchIndex+1)
-		state.branchIndex = max(0, state.branchIndex-1)
-	}
+	return true
 }
 
 func wasLeftClicked(window draw.Window) bool {
