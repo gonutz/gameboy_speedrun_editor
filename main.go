@@ -749,20 +749,23 @@ func (state *editorState) renderMenu(
 	drawStartSelect(startButtonRect, "Start", ButtonStart)
 	drawStartSelect(selectButtonRect, "sElect", ButtonSelect)
 
+	// Draw the branch menu.
+	const menuTextScale = 1.5
+
 	y := selectButtonRect.y + selectButtonRect.h + 10
 	for i, b := range state.branches {
 		name := b.name
 		if i == state.branchIndex {
 			name = ">" + name + "<"
 		}
-		textW, textH := window.GetScaledTextSize(name, frameNumberScale)
+		textW, textH := window.GetScaledTextSize(name, menuTextScale)
 		textX := inputMenuX + (inputMenuW-textW)/2
 		color := draw.Black
 		r := rect(textX, y, textW, textH)
 		if r.contains(mouseX, mouseY) {
 			color = draw.Gray
 		}
-		window.DrawScaledText(name, textX, y, frameNumberScale, color)
+		window.DrawScaledText(name, textX, y, menuTextScale, color)
 		y += textH
 
 		if i != state.branchIndex && leftClick && r.contains(mouseX, mouseY) {
@@ -787,19 +790,25 @@ func (state *editorState) renderMenu(
 		}
 	}
 
-	textW, textH := window.GetScaledTextSize("New Branch", frameNumberScale)
-	newBranchButton := rect(0, y, textW+20, textH+10)
-	newBranchButton.x = inputMenuX + (inputMenuW-newBranchButton.w)/2
-	color := draw.LightPurple
-	if newBranchButton.contains(mouseX, mouseY) {
-		color = draw.Purple
-	}
-	newBranchButton.fill(window, color)
-	textX := newBranchButton.x + (newBranchButton.w-textW)/2
-	textY := newBranchButton.y + (newBranchButton.h-textH)/2
-	window.DrawScaledText("New Branch", textX, textY, frameNumberScale, draw.Black)
+	button := func(text string) bool {
+		textW, textH := window.GetScaledTextSize(text, menuTextScale)
+		newBranchButton := rect(0, y, textW+20, textH+10)
+		newBranchButton.x = inputMenuX + (inputMenuW-newBranchButton.w)/2
+		color := draw.LightPurple
+		if newBranchButton.contains(mouseX, mouseY) {
+			color = draw.Purple
+		}
+		newBranchButton.fill(window, color)
+		textX := newBranchButton.x + (newBranchButton.w-textW)/2
+		textY := newBranchButton.y + (newBranchButton.h-textH)/2
+		window.DrawScaledText(text, textX, textY, menuTextScale, draw.Black)
 
-	if leftClick && newBranchButton.contains(mouseX, mouseY) {
+		y += newBranchButton.h + 2
+
+		return leftClick && newBranchButton.contains(mouseX, mouseY)
+	}
+
+	if button("New Branch") {
 		b := state.branch()
 		state.branches = append(state.branches, branch{
 			name:          fmt.Sprintf("Branch %d", len(state.branches)+1),
@@ -807,6 +816,13 @@ func (state *editorState) renderMenu(
 			defaultInputs: b.defaultInputs,
 		})
 		state.branchIndex = len(state.branches) - 1
+	}
+
+	if len(state.branches) > 1 && button("Delete Branch") {
+		// TODO Ask confirmation before doing this, BUT ONLY if the branch is
+		// not the same as another one.
+		state.branches = slices.Delete(state.branches, state.branchIndex, state.branchIndex+1)
+		state.branchIndex = max(0, state.branchIndex-1)
 	}
 }
 
