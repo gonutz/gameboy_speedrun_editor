@@ -39,14 +39,12 @@ const (
 
 	keyFrameInterval      = 100
 	minSessionFileVersion = 1
-	sessionFileVersion    = 3
+	sessionFileVersion    = 4
 
-	textScale   = 0.8
-	fontHeight  = 13
-	frameWidth  = 1 + ScreenWidth + 1
-	frameHeight = fontHeight + ScreenHeight + 1
+	baseTextScale  = 0.8
+	baseFontHeight = 13
 
-	infoTextScale = 2 * textScale
+	infoTextScale = 2 * baseTextScale
 
 	inputMenuW       = 220
 	inputMenuMargin  = 20
@@ -60,6 +58,53 @@ const (
 	startButtonH           = abButtonSize / 3
 	startSelectButtonDistX = startButtonH / 2
 )
+
+var scalePercentages = []int{
+	50,
+	55,
+	60,
+	65,
+	70,
+	75,
+	80,
+	85,
+	90,
+	95,
+	100,
+	110,
+	120,
+	130,
+	140,
+	155,
+	170,
+	185,
+	200,
+	220,
+	240,
+	260,
+	285,
+	300,
+	335,
+	370,
+	400,
+	450,
+	500,
+	550,
+	600,
+	700,
+	800,
+}
+
+func bestFitScale(destScale float64) float64 {
+	best := 1.0
+	for _, percent := range scalePercentages {
+		scale := float64(percent) / 100
+		if math.Abs(destScale-scale) < math.Abs(destScale-best) {
+			best = scale
+		}
+	}
+	return best
+}
 
 func main() {
 	flag.Parse()
@@ -164,6 +209,7 @@ func main() {
 func newEditorState() *editorState {
 	return &editorState{
 		branches:                make([]branch, 1),
+		scaleFactor:             1,
 		dragStartFrame:          -1,
 		frameCache:              newFrameCache(),
 		pendingDoubleClickFrame: -1,
@@ -181,6 +227,7 @@ type editorState struct {
 	// keyFrameStates are the states at every keyFrameInterval-th frame. The
 	// very first item in keyFrameStates is for frame 0.
 	keyFrameStates []Gameboy
+	scaleFactor    float64
 
 	frameCache          *frameCache
 	singleScreenBuffer  [4 * ScreenWidth * ScreenHeight]byte
@@ -786,8 +833,6 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
 	altDown := window.IsKeyDown(draw.KeyLeftAlt) || window.IsKeyDown(draw.KeyRightAlt)
 	inputMenuX := windowW - inputMenuW - inputMenuMargin
-	frameCountX := inputMenuX / frameWidth
-	frameCountY := windowH / frameHeight
 	lastLeftMostFrame := state.leftMostFrame
 	lastActiveSelection := state.activeSelection
 
@@ -796,6 +841,46 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	if window.WasKeyPressed(draw.KeyF3) {
 		state.checkFrames(state.leftMostFrame)
 	}
+
+	oldScaleFactor := bestFitScale(state.scaleFactor)
+
+	zeroDown := window.WasKeyPressed(draw.Key0) || window.WasKeyPressed(draw.KeyNum0)
+	if controlDown && zeroDown {
+		state.scaleFactor = 1
+	}
+
+	if controlDown && window.WasKeyPressed(draw.KeyNumAdd) {
+		state.scaleFactor = min(8, max(0.5, state.scaleFactor*1.0905))
+	}
+	if controlDown && window.WasKeyPressed(draw.KeyNumSubtract) {
+		state.scaleFactor = min(8, max(0.5, state.scaleFactor/1.0905))
+	}
+
+	scrollY := window.MouseWheelY()
+	if controlDown && scrollY != 0 {
+		// We use the control key for zooming.
+		state.scaleFactor = min(8, max(0.5, state.scaleFactor*math.Pow(1.0905, scrollY)))
+	}
+
+	scaleFactor := bestFitScale(state.scaleFactor)
+
+	if scaleFactor != oldScaleFactor {
+		state.setInfo(fmt.Sprintf("Zoom: %.0f%%", scaleFactor*100))
+		state.render()
+	}
+
+	textScale := float32(scaleFactor * baseTextScale)
+	fontHeight := round(scaleFactor * baseFontHeight)
+	screenWidth := round(scaleFactor * ScreenWidth)
+	screenHeight := round(scaleFactor * ScreenHeight)
+	frameWidth := 1 + screenWidth + 1
+	frameHeight := fontHeight + screenHeight + 1
+
+	integerScaleUp := scaleFactor > 0 && screenWidth%ScreenWidth == 0
+	window.BlurImages(!integerScaleUp)
+
+	frameCountX := inputMenuX / frameWidth
+	frameCountY := windowH / frameHeight
 
 	if controlDown && !state.controlWasDown {
 		state.startDraggingFrameInputs(state.activeSelection.first)
@@ -807,21 +892,23 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 	}
 
 	// Append digits to the repeat counter text.
-	for i := range 10 {
-		if window.WasKeyPressed(draw.Key0+draw.Key(i)) ||
-			window.WasKeyPressed(draw.KeyNum0+draw.Key(i)) {
+	if !controlDown {
+		for i := range 10 {
+			if window.WasKeyPressed(draw.Key0+draw.Key(i)) ||
+				window.WasKeyPressed(draw.KeyNum0+draw.Key(i)) {
 
-			digit := strconv.Itoa(i)
+				digit := strconv.Itoa(i)
 
-			n, err := strconv.Atoi(state.infoText + digit)
-			isValidNumber := err == nil && 1 <= n && n <= 216000
+				n, err := strconv.Atoi(state.infoText + digit)
+				isValidNumber := err == nil && 1 <= n && n <= 216000
 
-			if !isValidNumber {
-				state.setInfo(digit)
-			} else {
-				state.setInfo(state.infoText + digit)
+				if !isValidNumber {
+					state.setInfo(digit)
+				} else {
+					state.setInfo(state.infoText + digit)
+				}
+				state.render()
 			}
-			state.render()
 		}
 	}
 
@@ -900,8 +987,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		frameDelta = frameCountX * frameCountY * repeatCount
 	}
 
-	scrollY := window.MouseWheelY()
-	if scrollY != 0 {
+	if scrollY != 0 && !controlDown {
 		ticks := -int(scrollY)
 
 		// By default we scroll down a whole line of frames.
@@ -911,8 +997,6 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		delta := ticks * frameCountX
 		if shiftDown {
 			delta = ticks
-		} else if controlDown {
-			delta = ticks * frameCountX * frameCountY
 		}
 
 		state.leftMostFrame = max(0, state.leftMostFrame+delta)
@@ -1261,13 +1345,13 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 				window.DrawImageFilePart(
 					"gameboyScreens",
 					frameX*ScreenWidth, frameY*ScreenHeight, ScreenWidth, ScreenHeight,
-					screenOffsetX, screenOffsetY, ScreenWidth, ScreenHeight,
+					screenOffsetX, screenOffsetY, screenWidth, screenHeight,
 					0,
 				)
 				isActiveFrame := state.activeSelection.start() <= frameIndex && frameIndex < state.activeSelection.end()
 				if isActiveFrame {
 					highlightColor := draw.RGBA(1, 0.5, 0.5, 0.2)
-					window.FillRect(screenOffsetX, screenOffsetY, ScreenWidth, ScreenHeight, highlightColor)
+					window.FillRect(screenOffsetX, screenOffsetY, screenWidth, screenHeight, highlightColor)
 				}
 
 				// Render the text above the frame.
@@ -1293,7 +1377,7 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 				add(ButtonStart, "Start")
 
 				textWidth, _ := window.GetScaledTextSize(text, textScale)
-				textX := screenOffsetX + (topLeftTextWidth+ScreenWidth-textWidth)/2
+				textX := screenOffsetX + (topLeftTextWidth+screenWidth-textWidth)/2
 				window.DrawScaledText(text, textX, textY, textScale, draw.White)
 
 				frameIndex++
@@ -1546,6 +1630,18 @@ func (state *editorState) open(path string) error {
 		rest = rest[length:]
 		return str
 	}
+	f := func() float32 {
+		if loadErr != nil {
+			return 0
+		}
+		if len(rest) < 4 {
+			loadErr = fmt.Errorf("short read: float32 needs 4 bytes")
+			return 0
+		}
+		n := binary.LittleEndian.Uint32(rest)
+		rest = rest[4:]
+		return math.Float32frombits(n)
+	}
 	v := func(x any) {
 		if loadErr != nil {
 			return
@@ -1589,6 +1685,11 @@ func (state *editorState) open(path string) error {
 	leftMostFrameTemp := n()
 	activeSelectionFirstTemp := n()
 	activeSelectionLastTemp := n()
+
+	scaleFactorTemp := 1.0
+	if fileVersion >= 4 {
+		scaleFactorTemp = float64(f())
+	}
 
 	branchIndexTemp := 0
 	var branchesTemp []branch
@@ -1647,6 +1748,7 @@ func (state *editorState) open(path string) error {
 	state.leftMostFrame = leftMostFrameTemp
 	state.activeSelection.first = activeSelectionFirstTemp
 	state.activeSelection.last = activeSelectionLastTemp
+	state.scaleFactor = scaleFactorTemp
 	state.branchIndex = branchIndexTemp
 	state.branches = branchesTemp
 	state.keyFrameStates = keyFrameStatesTemp
@@ -1719,6 +1821,10 @@ func (state *editorState) save(path string) error {
 		_, err := buf.Write(bytes)
 		setErr(err)
 	}
+	f := func(x float32) {
+		n := math.Float32bits(x)
+		setErr(binary.Write(&buf, binary.LittleEndian, n))
+	}
 	v := func(x any) {
 		setErr(binary.Write(&buf, binary.LittleEndian, x))
 	}
@@ -1730,6 +1836,7 @@ func (state *editorState) save(path string) error {
 	n(state.leftMostFrame)
 	n(state.activeSelection.first)
 	n(state.activeSelection.last)
+	f(float32(state.scaleFactor))
 	n(state.branchIndex)
 	n(len(state.branches))
 	for i := range state.branches {
@@ -1853,7 +1960,7 @@ func newFrameCache() *frameCache {
 	return &frameCache{}
 }
 
-const frameCacheSize = 100
+const frameCacheSize = 500
 
 type frameCache struct {
 	frameIndices      []int
