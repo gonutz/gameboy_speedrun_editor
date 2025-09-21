@@ -747,7 +747,7 @@ func (state *editorState) renderMenu(
 	selectButtonRect := rect(selectButtonX, startButtonY, startButtonW, startButtonH)
 
 	drawStartSelect(startButtonRect, "Start", ButtonStart)
-	drawStartSelect(selectButtonRect, "sElect", ButtonSelect)
+	drawStartSelect(selectButtonRect, "Select", ButtonSelect)
 
 	// Draw the branch menu.
 	const menuTextScale = 1.5
