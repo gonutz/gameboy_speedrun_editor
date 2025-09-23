@@ -117,6 +117,14 @@ type Window interface {
 	// value means the wheel was rotated left.
 	MouseWheelX() float64
 
+	// SetClipRect restricts the rendering functions to stay inside the given
+	// rectangle. Nothing will be rendered outside of this rectangle until a
+	// call to another SetClipRect. The clipping rectangle is reset between
+	// frames. To reset it manually, call SetClipRect again, e.g.:
+	//
+	//  SetClipRect(0, 0, windowWidth, windowHeight)
+	SetClipRect(x, y, width, height int)
+
 	// DrawPoint draws a single point at the given screen position in pixels.
 	DrawPoint(x, y int, color Color)
 

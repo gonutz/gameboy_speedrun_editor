@@ -240,6 +240,7 @@ func RunWindow(title string, width, height int, update UpdateFunction) error {
 		device.SetRenderState(d3d9.RS_SRCBLEND, d3d9.BLEND_SRCALPHA)
 		device.SetRenderState(d3d9.RS_DESTBLEND, d3d9.BLEND_INVSRCALPHA)
 		device.SetRenderState(d3d9.RS_ALPHABLENDENABLE, 1)
+		device.SetRenderState(d3d9.RS_SCISSORTESTENABLE, 1)
 
 		device.SetSamplerState(0, d3d9.SAMP_ADDRESSU, d3d9.TADDRESS_BORDER)
 		device.SetSamplerState(0, d3d9.SAMP_ADDRESSV, d3d9.TADDRESS_BORDER)
@@ -327,8 +328,13 @@ func RunWindow(title string, width, height int, update UpdateFunction) error {
 
 				var wasUpdated bool
 				for nextUpdate > 0 {
+					// Reset the clipping rectangle.
+					windowW, windowH := globalWindow.Size()
+					globalWindow.SetClipRect(0, 0, windowW, windowH)
 					globalWindow.updateMouseInfo()
+
 					update(globalWindow)
+
 					globalWindow.flushBacklog()
 					wasUpdated = true
 					nextUpdate -= 1
@@ -453,9 +459,7 @@ func handleMessage(window w32.HWND, msg uint32, w, l uintptr) uintptr {
 		return 0
 	case w32.WM_CHAR:
 		r := utf16.Decode([]uint16{uint16(w)})[0]
-		if r >= ' ' {
-			globalWindow.text += string(r)
-		}
+		globalWindow.text += string(r)
 		return 0
 	case w32.WM_MOUSEMOVE:
 		globalWindow.mouse.x = int(int16(w32.LOWORD(uint32(l))))
@@ -764,6 +768,16 @@ func (w *window) MouseWheelX() float64 {
 
 func (w *window) MouseWheelY() float64 {
 	return w.wheelY
+}
+
+func (w *window) SetClipRect(x, y, width, height int) {
+	w.flushBacklog()
+	w.device.SetScissorRect(d3d9.RECT{
+		Left:   int32(x),
+		Top:    int32(y),
+		Right:  int32(x + width),
+		Bottom: int32(y + height),
+	})
 }
 
 func (w *window) DrawPoint(x, y int, color Color) {

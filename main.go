@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gonutz/prototype/draw"
 	"github.com/sqweek/dialog"
@@ -130,80 +132,154 @@ func main() {
 			state.lastWindowW, state.lastWindowH = windowW, windowH
 		}()
 
-		if window.WasKeyPressed(draw.KeyF11) || window.WasKeyPressed(draw.KeyF) {
-			state.fullscreen = !state.fullscreen
-			window.SetFullscreen(state.fullscreen)
-		}
-
-		controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
-
-		// When saving/loading a file, we return from the current frame,
-		// otherwise the last event from the dialog (like pressing Escape) will
-		// be forwarded to our editor. The one exception is the double-click.
-		// See the comment on waitForLeftMouseRelease.
-		if controlDown && window.WasKeyPressed(draw.KeyN) {
-			err := state.createNewSpeedrun()
-			if err != nil {
-				state.setWarning(err.Error())
-				state.render()
-			} else {
-				window.SetTitle(windowTitle)
-			}
-			state.render()
-			state.waitForLeftMouseRelease = true
-			return
-		}
-		if controlDown && window.WasKeyPressed(draw.KeyS) {
-			err := state.saveFile()
-			if err != nil {
-				state.setWarning(err.Error())
-				state.render()
-			}
-			state.waitForLeftMouseRelease = true
-			return
-		}
-		if controlDown && window.WasKeyPressed(draw.KeyO) {
-			path, err := state.openFile()
-			if err != nil {
-				state.setWarning(err.Error())
-			} else {
-				window.SetTitle(windowTitle + " - " + path)
-			}
-			state.render()
-			state.waitForLeftMouseRelease = true
-			return
-		}
-
-		goToEditor := state.replayingGame && window.WasKeyPressed(draw.KeyEscape)
-		if goToEditor {
-			state.replayingGame = false
-			state.lastReplayPaused = state.replayPaused
-			state.resetInfoText()
-			muteSound()
-			state.render()
-		}
-
-		goToGameReplay := !state.replayingGame && window.WasKeyPressed(draw.KeySpace)
-		if goToGameReplay {
-			state.replayingGame = true
-
-			// NOTE We set the pause state to the opposite of what we want
-			// it to be because the same key (SPACE) is used to toggle both
-			// the replay state and the pause state. That means when we hit
-			// that key, we go to the editor and it will immediately toggle
-			// the pause state because that button is still down.
-			state.replayPaused = !state.lastReplayPaused
-
-			state.lastReplayedFrame = state.leftMostFrame
-			state.render()
-		}
-
-		if state.replayingGame {
-			state.executeReplayFrame(window)
+		if state.isModalDialogOpen {
+			state.executeModalDialogFrame(window)
 		} else {
-			state.executeEditorFrame(window)
+			state.executeMainFrame(window)
 		}
 	}))
+}
+
+func (state *editorState) executeModalDialogFrame(window draw.Window) {
+	state.executeEditorFrame(newReadOnlyWindow(window))
+
+	for _, r := range window.Characters() {
+		if r == '\b' {
+			// Backspace deletes the last character.
+			_, size := utf8.DecodeLastRuneInString(state.dialogText)
+			state.dialogText = state.dialogText[:len(state.dialogText)-size]
+		} else if r == 127 {
+			// Control + Backspace deletes the last word.
+			letters := []rune(state.dialogText)
+			end := len(letters)
+			for end > 0 && letters[end-1] == ' ' {
+				end--
+			}
+			for end > 0 && letters[end-1] != ' ' {
+				end--
+			}
+			state.dialogText = string(letters[:end])
+		} else if r == 27 {
+			// Escape cancels the dialog.
+			state.cancelBranchRenameDialog()
+		} else if r == '\r' {
+			// Enter accepts the dialog.
+			state.acceptBranchRenameDialog()
+		} else if unicode.IsGraphic(r) {
+			// Non-control characters get appended to the text.
+			state.dialogText += string(r)
+		}
+	}
+
+	windowW, windowH := window.Size()
+	dialogW, dialogH := 500, 200
+	dialogX := (windowW - dialogW) / 2
+	dialogY := (windowH - dialogH) / 2
+
+	dialogR := rect(dialogX, dialogY, dialogW, dialogH)
+
+	dialogR.fill(window, draw.Black)
+	dialogR.inset(5).fill(window, draw.White)
+
+	const textScale = 2
+
+	title := "Enter new Branch Name"
+	titleW, titleH := window.GetScaledTextSize(title, textScale)
+	titleX := dialogX + (dialogW-titleW)/2
+	titleY := dialogY + dialogH/2 - titleH - 10
+	window.DrawScaledText(title, titleX, titleY, textScale, draw.Black)
+
+	textR := rect(dialogX+30, dialogY+dialogH/2+10, dialogW-60, titleH+10)
+	textR.fill(window, draw.Black)
+	textR.inset(3).fill(window, draw.White)
+
+	clip := textR.inset(5)
+	window.SetClipRect(clip.x, clip.y, clip.w, clip.h)
+	text := state.dialogText
+	if time.Now().Unix()%2 == 0 {
+		text += "|"
+	}
+	textW, _ := window.GetScaledTextSize(state.dialogText+"|", textScale)
+	// Draw the text left-aligned except if it gets longer than the rectangle,
+	// then draw it right-aligned so we can see the end of the text.
+	textX := clip.x - max(0, textW-clip.w)
+	window.DrawScaledText(text, textX, clip.y, textScale, draw.Black)
+}
+
+func (state *editorState) executeMainFrame(window draw.Window) {
+	if window.WasKeyPressed(draw.KeyF11) || window.WasKeyPressed(draw.KeyF) {
+		state.fullscreen = !state.fullscreen
+		window.SetFullscreen(state.fullscreen)
+	}
+
+	controlDown := window.IsKeyDown(draw.KeyLeftControl) || window.IsKeyDown(draw.KeyRightControl)
+
+	// When saving/loading a file, we return from the current frame,
+	// otherwise the last event from the dialog (like pressing Escape) will
+	// be forwarded to our editor. The one exception is the double-click.
+	// See the comment on waitForLeftMouseRelease.
+	if controlDown && window.WasKeyPressed(draw.KeyN) {
+		err := state.createNewSpeedrun()
+		if err != nil {
+			state.setWarning(err.Error())
+			state.render()
+		} else {
+			window.SetTitle(windowTitle)
+		}
+		state.render()
+		state.waitForLeftMouseRelease = true
+		return
+	}
+	if controlDown && window.WasKeyPressed(draw.KeyS) {
+		err := state.saveFile()
+		if err != nil {
+			state.setWarning(err.Error())
+			state.render()
+		}
+		state.waitForLeftMouseRelease = true
+		return
+	}
+	if controlDown && window.WasKeyPressed(draw.KeyO) {
+		path, err := state.openFile()
+		if err != nil {
+			state.setWarning(err.Error())
+		} else {
+			window.SetTitle(windowTitle + " - " + path)
+		}
+		state.render()
+		state.waitForLeftMouseRelease = true
+		return
+	}
+
+	goToEditor := state.replayingGame && window.WasKeyPressed(draw.KeyEscape)
+	if goToEditor {
+		state.replayingGame = false
+		state.lastReplayPaused = state.replayPaused
+		state.resetInfoText()
+		muteSound()
+		state.render()
+	}
+
+	goToGameReplay := !state.replayingGame && window.WasKeyPressed(draw.KeySpace)
+	if goToGameReplay {
+		state.replayingGame = true
+
+		// NOTE We set the pause state to the opposite of what we want
+		// it to be because the same key (SPACE) is used to toggle both
+		// the replay state and the pause state. That means when we hit
+		// that key, we go to the editor and it will immediately toggle
+		// the pause state because that button is still down.
+		state.replayPaused = !state.lastReplayPaused
+
+		state.lastReplayedFrame = state.leftMostFrame
+		state.render()
+	}
+
+	if state.replayingGame {
+		state.executeReplayFrame(window)
+	} else {
+		state.executeEditorFrame(window)
+	}
 }
 
 func newEditorState() *editorState {
@@ -270,9 +346,11 @@ type editorState struct {
 	replayPaused      bool
 	lastReplayPaused  bool
 	lastReplayedFrame int
+	isModalDialogOpen bool
 
 	infoText      string
 	infoTextColor draw.Color
+	dialogText    string
 }
 
 type branch struct {
@@ -782,6 +860,10 @@ func (state *editorState) renderMenu(
 		state.branchIndex = len(state.branches) - 1
 	}
 
+	if button("Rename Branch") {
+		state.startModalBranchRenameDialog(window)
+	}
+
 	if len(state.branches) > 1 && button("Delete Branch") {
 		skipConfirmation := false
 
@@ -838,6 +920,22 @@ func (state *editorState) renderMenu(
 			state.render()
 		}
 	}
+}
+
+func (s *editorState) startModalBranchRenameDialog(window draw.Window) {
+	s.isModalDialogOpen = true
+	s.dialogText = s.branch().name
+}
+
+func (s *editorState) acceptBranchRenameDialog() {
+	s.branch().name = s.dialogText
+	s.cancelBranchRenameDialog()
+}
+
+func (s *editorState) cancelBranchRenameDialog() {
+	s.isModalDialogOpen = false
+	s.dialogText = ""
+	s.render()
 }
 
 func equalInputs(a, b branch) bool {
@@ -2134,12 +2232,25 @@ func (r rectangle) expandXY(byX, byY int) rectangle {
 	}
 }
 
+func (r rectangle) outline(window draw.Window, color draw.Color) {
+	window.DrawRect(r.x, r.y, r.w, r.h, color)
+}
+
 func (r rectangle) fill(window draw.Window, color draw.Color) {
 	window.FillRect(r.x, r.y, r.w, r.h, color)
 }
 
 func (r rectangle) fillEllipse(window draw.Window, color draw.Color) {
 	window.FillEllipse(r.x, r.y, r.w, r.h, color)
+}
+
+func (r rectangle) inset(by int) rectangle {
+	return rectangle{
+		x: r.x + by,
+		y: r.y + by,
+		w: r.w - 2*by,
+		h: r.h - 2*by,
+	}
 }
 
 func check(err error) {
