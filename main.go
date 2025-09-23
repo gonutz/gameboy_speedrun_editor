@@ -141,7 +141,11 @@ func main() {
 }
 
 func (state *editorState) executeModalDialogFrame(window draw.Window) {
-	state.executeEditorFrame(newReadOnlyWindow(window))
+	if state.replayingGame {
+		state.executeReplayFrame(newReadOnlyWindow(window))
+	} else {
+		state.executeEditorFrame(newReadOnlyWindow(window))
+	}
 
 	for _, r := range window.Characters() {
 		if r == '\b' {
