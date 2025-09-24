@@ -876,7 +876,7 @@ func (state *editorState) renderMenu(
 		return leftClick && newBranchButton.contains(mouseX, mouseY)
 	}
 
-	if button("New Branch") {
+	if button("Copy Branch") {
 		b := state.branch()
 		state.branches = append(state.branches, branch{
 			name:                fmt.Sprintf("Branch %d", len(state.branches)+1),
@@ -887,7 +887,7 @@ func (state *editorState) renderMenu(
 		state.branchIndex = len(state.branches) - 1
 	}
 
-	if button("Rename Branch") {
+	if button("Rename Branch") || window.WasKeyPressed(draw.KeyF2) {
 		state.startModalBranchRenameDialog(window)
 	}
 
