@@ -260,10 +260,19 @@ func (state *editorState) executeMainFrame(window draw.Window) {
 		return
 	}
 
-	goToEditor := state.replayingGame && window.WasKeyPressed(draw.KeyEscape)
+	// Escape goes back to the last editor view.
+	// F1 goes to the editor at the current replay position.
+	esc := window.WasKeyPressed(draw.KeyEscape)
+	f1 := window.WasKeyPressed(draw.KeyF1)
+	goToEditor := state.replayingGame && (esc || f1)
 	if goToEditor {
 		state.replayingGame = false
 		state.lastReplayPaused = state.replayPaused
+
+		if f1 {
+			state.leftMostFrame = state.lastReplayedFrame
+		}
+
 		state.resetInfoText()
 		muteSound()
 		state.render()
