@@ -897,7 +897,7 @@ func (state *editorState) renderMenu(
 	}
 
 	if button("Rename Branch") || window.WasKeyPressed(draw.KeyF2) {
-		state.startModalBranchRenameDialog(window)
+		state.startModalBranchRenameDialog()
 	}
 
 	if len(state.branches) > 1 && button("Delete Branch") {
@@ -915,8 +915,16 @@ func (state *editorState) renderMenu(
 		msg := fmt.Sprintf("Do you really want to delete \"%s\"?", state.branch().name)
 
 		if skipConfirmation || dialog.Message(msg).YesNo() {
-			state.branches = slices.Delete(state.branches, state.branchIndex, state.branchIndex+1)
-			state.branchIndex = max(0, state.branchIndex-1)
+			del := state.branchIndex
+
+			if del == 0 {
+				state.switchToBranch(1)
+			} else {
+				state.switchToBranch(del - 1)
+			}
+
+			state.branches = slices.Delete(state.branches, del, del+1)
+			state.branchIndex = max(0, del-1)
 		}
 	}
 
@@ -962,29 +970,33 @@ func (state *editorState) renderMenu(
 		y += textH
 
 		if i != state.branchIndex && leftClick && branchBounds.contains(mouseX, mouseY) {
-			oldBranch := state.branch()
-			state.branchIndex = i
-			newBranch := state.branch()
-
-			end := min(
-				len(oldBranch.frameInputs),
-				len(newBranch.frameInputs),
-			)
-			dirty := end
-			for i := range end {
-				if oldBranch.frameInputs[i] != newBranch.frameInputs[i] {
-					dirty = i
-					break
-				}
-			}
-
-			state.setDirtyFrame(dirty)
-			state.render()
+			state.switchToBranch(i)
 		}
 	}
 }
 
-func (s *editorState) startModalBranchRenameDialog(window draw.Window) {
+func (s *editorState) switchToBranch(index int) {
+	oldBranch := s.branch()
+	s.branchIndex = index
+	newBranch := s.branch()
+
+	end := min(
+		len(oldBranch.frameInputs),
+		len(newBranch.frameInputs),
+	)
+	dirty := end
+	for i := range end {
+		if oldBranch.frameInputs[i] != newBranch.frameInputs[i] {
+			dirty = i
+			break
+		}
+	}
+
+	s.setDirtyFrame(dirty)
+	s.render()
+}
+
+func (s *editorState) startModalBranchRenameDialog() {
 	s.isModalDialogOpen = true
 	s.dialogText = ""
 }
