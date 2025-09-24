@@ -41,7 +41,7 @@ const (
 
 	keyFrameInterval      = 100
 	minSessionFileVersion = 1
-	sessionFileVersion    = 4
+	sessionFileVersion    = 5
 
 	baseTextScale  = 0.8
 	baseFontHeight = 13
@@ -59,6 +59,11 @@ const (
 	startButtonW           = abButtonSize
 	startButtonH           = abButtonSize / 3
 	startSelectButtonDistX = startButtonH / 2
+)
+
+var (
+	selectionColor = draw.RGBA(1, 0.5, 0.5, 0.2)
+	highlightColor = draw.RGBA(1, 0.5, 1, 0.25)
 )
 
 var scalePercentages = []int{
@@ -358,9 +363,10 @@ type editorState struct {
 }
 
 type branch struct {
-	name          string
-	frameInputs   []inputState // Holds the state of all the Gameboy buttons for each frame.
-	defaultInputs inputState   // Button states for future frames that are not yet generated.
+	name                string
+	frameInputs         []inputState // Holds the state of all the Gameboy buttons for each frame.
+	defaultInputs       inputState   // Button states for future frames that are not yet generated.
+	highlightFrameIndex int
 }
 
 func (s *editorState) branch() *branch {
@@ -388,6 +394,9 @@ func (s *editorState) resetForNewGame() {
 		b.defaultInputs = 0
 	}
 	s.branches = s.branches[:1]
+	s.branches[0].name = "Branch 1"
+	s.branches[0].frameInputs = s.branches[0].frameInputs[:0]
+	s.branches[0].highlightFrameIndex = -1
 	s.keyFrameStates = s.keyFrameStates[:0]
 	s.frameCache.clear()
 	s.gameboyScreenBuffer = s.gameboyScreenBuffer[:0]
@@ -586,6 +595,14 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 		state.checkFrames(state.lastReplayedFrame)
 	}
 
+	if window.WasKeyPressed(draw.KeyH) {
+		if state.branch().highlightFrameIndex == state.lastReplayedFrame {
+			state.branch().highlightFrameIndex = -1
+		} else {
+			state.branch().highlightFrameIndex = state.lastReplayedFrame
+		}
+	}
+
 	// Let the user toggle buttons for the current frame.
 	for key, b := range keyMap {
 		if window.WasKeyPressed(key) {
@@ -667,6 +684,9 @@ func (state *editorState) executeReplayFrame(window draw.Window) {
 	screenX := (windowW - inputMenuW - inputMenuMargin - screenW) / 2
 	screenY := (windowH - screenH) / 2
 	window.DrawImageFileTo("gameboyScreen", screenX, screenY, screenW, screenH, 0)
+	if state.lastReplayedFrame == state.branch().highlightFrameIndex {
+		window.FillRect(screenX, screenY, screenW, screenH, highlightColor)
+	}
 
 	// Draw the inputs as a menu.
 	inputs := state.inputsAt(state.lastReplayedFrame)
@@ -857,9 +877,10 @@ func (state *editorState) renderMenu(
 	if button("New Branch") {
 		b := state.branch()
 		state.branches = append(state.branches, branch{
-			name:          fmt.Sprintf("Branch %d", len(state.branches)+1),
-			frameInputs:   slices.Clone(b.frameInputs),
-			defaultInputs: b.defaultInputs,
+			name:                fmt.Sprintf("Branch %d", len(state.branches)+1),
+			frameInputs:         slices.Clone(b.frameInputs),
+			defaultInputs:       b.defaultInputs,
+			highlightFrameIndex: b.highlightFrameIndex,
 		})
 		state.branchIndex = len(state.branches) - 1
 	}
@@ -875,7 +896,7 @@ func (state *editorState) renderMenu(
 		// it without asking confirmation because no progress is really lost.
 		for i := range state.branches {
 			if i != state.branchIndex &&
-				equalInputs(state.branches[i], state.branches[state.branchIndex]) {
+				equalBranches(state.branches[i], state.branches[state.branchIndex]) {
 				skipConfirmation = true
 			}
 		}
@@ -888,6 +909,14 @@ func (state *editorState) renderMenu(
 		}
 	}
 
+	minHighlight := -1
+	for _, b := range state.branches {
+		h := b.highlightFrameIndex
+		if minHighlight == -1 || (h >= 0 && h < minHighlight) {
+			minHighlight = h
+		}
+	}
+
 	for i, b := range state.branches {
 		name := b.name
 		if i == state.branchIndex {
@@ -896,14 +925,32 @@ func (state *editorState) renderMenu(
 		textW, textH := window.GetScaledTextSize(name, menuTextScale)
 		textX := inputMenuX + (inputMenuW-textW)/2
 		color := draw.Black
-		r := rect(textX, y, textW, textH)
-		if r.contains(mouseX, mouseY) {
+		branchBounds := rect(textX, y, textW, textH)
+		if branchBounds.contains(mouseX, mouseY) {
 			color = draw.Gray
 		}
 		window.DrawScaledText(name, textX, y, menuTextScale, color)
 		y += textH
 
-		if i != state.branchIndex && leftClick && r.contains(mouseX, mouseY) {
+		highlight := "no highlight"
+		if b.highlightFrameIndex >= 0 {
+			rel := ""
+			if minHighlight != -1 {
+				delta := b.highlightFrameIndex - minHighlight
+				rel = fmt.Sprintf("+%d", delta)
+				if delta == 0 {
+					rel = "best"
+				}
+			}
+			highlight = fmt.Sprintf("%d (%s)", b.highlightFrameIndex, rel)
+		}
+		textW, textH = window.GetScaledTextSize(highlight, menuTextScale)
+		textX = inputMenuX + (inputMenuW-textW)/2
+		color = draw.DarkRed
+		window.DrawScaledText(highlight, textX, y, menuTextScale, color)
+		y += textH
+
+		if i != state.branchIndex && leftClick && branchBounds.contains(mouseX, mouseY) {
 			oldBranch := state.branch()
 			state.branchIndex = i
 			newBranch := state.branch()
@@ -942,7 +989,13 @@ func (s *editorState) cancelBranchRenameDialog() {
 	s.render()
 }
 
-func equalInputs(a, b branch) bool {
+func equalBranches(a, b branch) bool {
+	if a.highlightFrameIndex != b.highlightFrameIndex {
+		return false
+	}
+	if a.defaultInputs != b.defaultInputs {
+		return false
+	}
 	if len(a.frameInputs) != len(b.frameInputs) {
 		return false
 	}
@@ -984,6 +1037,16 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 
 	if window.WasKeyPressed(draw.KeyF3) {
 		state.checkFrames(state.leftMostFrame)
+	}
+
+	// TODO Maybe only use H to toggle the highlight, and Ctrl+H to jump to it?
+	if window.WasKeyPressed(draw.KeyH) && state.activeSelection.count() == 1 {
+		if state.branch().highlightFrameIndex == state.activeSelection.first {
+			state.branch().highlightFrameIndex = -1
+		} else {
+			state.branch().highlightFrameIndex = state.activeSelection.first
+		}
+		state.render()
 	}
 
 	oldScaleFactor := bestFitScale(state.scaleFactor)
@@ -1420,8 +1483,10 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 		frameIndex := state.leftMostFrame
 		for frameY := range frameCountY {
 			for frameX := range frameCountX {
-				screenOffsetX := frameX*frameWidth + 1
-				screenOffsetY := frameY*frameHeight + fontHeight
+				frameOffsetX := frameX * frameWidth
+				frameOffsetY := frameY * frameHeight
+				screenOffsetX := frameOffsetX + 1
+				screenOffsetY := frameOffsetY + fontHeight
 				inputs := state.inputsAt(frameIndex)
 
 				// Determine color by button state for this frame.
@@ -1477,12 +1542,10 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 				}
 
 				// Color the frame border.
-				frameLeft := frameX * frameWidth
-				frameTop := frameY * frameHeight
-				window.FillRect(frameLeft, frameTop, frameWidth, fontHeight, borderColor)
-				window.FillRect(frameLeft, frameTop, 1, frameHeight, borderColor)
-				window.FillRect(frameLeft, frameTop+frameHeight-1, frameWidth, 1, borderColor)
-				window.FillRect(frameLeft+frameWidth-1, frameTop, 1, frameHeight, borderColor)
+				window.FillRect(frameOffsetX, frameOffsetY, frameWidth, fontHeight, borderColor)
+				window.FillRect(frameOffsetX, frameOffsetY, 1, frameHeight, borderColor)
+				window.FillRect(frameOffsetX, frameOffsetY+frameHeight-1, frameWidth, 1, borderColor)
+				window.FillRect(frameOffsetX+frameWidth-1, frameOffsetY, 1, frameHeight, borderColor)
 
 				// Render the Gameboy screen.
 
@@ -1494,8 +1557,11 @@ func (state *editorState) executeEditorFrame(window draw.Window) {
 				)
 				isActiveFrame := state.activeSelection.start() <= frameIndex && frameIndex < state.activeSelection.end()
 				if isActiveFrame {
-					highlightColor := draw.RGBA(1, 0.5, 0.5, 0.2)
-					window.FillRect(screenOffsetX, screenOffsetY, screenWidth, screenHeight, highlightColor)
+					window.FillRect(screenOffsetX, screenOffsetY, screenWidth, screenHeight, selectionColor)
+				}
+
+				if frameIndex == state.branch().highlightFrameIndex {
+					window.FillRect(frameOffsetX, frameOffsetY, frameWidth, frameHeight, highlightColor)
 				}
 
 				// Render the text above the frame.
@@ -1747,7 +1813,7 @@ func (state *editorState) open(path string) error {
 		}
 		n := binary.LittleEndian.Uint32(rest)
 		rest = rest[4:]
-		return int(n)
+		return int(int32(n))
 	}
 	b := func() byte {
 		if loadErr != nil {
@@ -1843,6 +1909,7 @@ func (state *editorState) open(path string) error {
 		branchesTemp = make([]branch, 1)
 		branch := &branchesTemp[0]
 		branch.name = "Branch 1"
+		branch.highlightFrameIndex = -1
 		branch.defaultInputs = inputState(b())
 		branch.frameInputs = make([]inputState, n())
 		for i := range branch.frameInputs {
@@ -1855,6 +1922,10 @@ func (state *editorState) open(path string) error {
 		for i := range branchesTemp {
 			branch := &branchesTemp[i]
 			branch.name = s()
+			branch.highlightFrameIndex = -1
+			if fileVersion >= 5 {
+				branch.highlightFrameIndex = n()
+			}
 			branch.defaultInputs = inputState(b())
 			branch.frameInputs = make([]inputState, n())
 			for i := range branch.frameInputs {
@@ -1954,7 +2025,7 @@ func (state *editorState) save(path string) error {
 		}
 	}
 	n := func(n int) {
-		setErr(binary.Write(&buf, binary.LittleEndian, uint32(n)))
+		setErr(binary.Write(&buf, binary.LittleEndian, int32(n)))
 	}
 	b := func(b byte) {
 		setErr(buf.WriteByte(b))
@@ -1986,6 +2057,7 @@ func (state *editorState) save(path string) error {
 	for i := range state.branches {
 		branch := &state.branches[i]
 		s(branch.name)
+		n(branch.highlightFrameIndex)
 		b(byte(branch.defaultInputs))
 		n(len(branch.frameInputs))
 		for _, inputs := range branch.frameInputs {
