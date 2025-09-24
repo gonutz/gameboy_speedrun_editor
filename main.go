@@ -582,6 +582,8 @@ func (s *editorState) setButtonDown(frameIndex, count int, button Button, down b
 func (state *editorState) executeReplayFrame(window draw.Window) {
 	windowW, windowH := window.Size()
 
+	window.BlurImages(false)
+
 	if window.WasKeyPressed(draw.KeySpace) {
 		state.replayPaused = !state.replayPaused
 		if state.replayPaused {
