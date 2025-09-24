@@ -977,7 +977,7 @@ func (state *editorState) renderMenu(
 
 func (s *editorState) startModalBranchRenameDialog(window draw.Window) {
 	s.isModalDialogOpen = true
-	s.dialogText = s.branch().name
+	s.dialogText = ""
 }
 
 func (s *editorState) acceptBranchRenameDialog() {
@@ -2308,10 +2308,6 @@ func (r rectangle) expandXY(byX, byY int) rectangle {
 		w: r.w + 2*byX,
 		h: r.h + 2*byY,
 	}
-}
-
-func (r rectangle) outline(window draw.Window, color draw.Color) {
-	window.DrawRect(r.x, r.y, r.w, r.h, color)
 }
 
 func (r rectangle) fill(window draw.Window, color draw.Color) {
